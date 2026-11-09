@@ -41,6 +41,8 @@ class AgentSessionHandle(Protocol):
 
     async def abort(self) -> None: ...
 
+    def close(self) -> None: ...
+
 
 @dataclass(slots=True)
 class AgentSession:
@@ -49,6 +51,7 @@ class AgentSession:
     session_id: str
     _session: Any
     _detach: Callable[[], None] = field(repr=False)
+    closed: bool = False
 
     async def send(self, prompt: str) -> None:
         await self._session.send(prompt)
@@ -57,7 +60,13 @@ class AgentSession:
         await self._session.abort()
 
     def close(self) -> None:
-        """イベント購読を外す（SDK のセッション自体は abort で止める）。"""
+        """イベント購読を外す（SDK のセッション自体は abort で止める）。
+
+        runtime と provider の両方から呼ばれるため、二度目は何もしない。
+        """
+        if self.closed:
+            return
+        self.closed = True
         self._detach()
 
 

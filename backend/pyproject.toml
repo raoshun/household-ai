@@ -45,5 +45,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # 日本語コメント中の全角記�
 max-complexity = 12
 
 [tool.pytest.ini_options]
+# 実行は backend/ 上で（このファイルが rootdir の設定になり ../tests を拾う）
 asyncio_mode = "auto"
+pythonpath = ["."]
 testpaths = ["../tests"]
