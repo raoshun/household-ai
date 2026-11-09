@@ -8,9 +8,9 @@ README 2.3 章の方針に従い、``copilot`` パッケージの import はこ�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Protocol
 
 from copilot import CopilotClient, ToolSet
@@ -133,11 +133,11 @@ class CopilotAgentProvider:
         self._client = client
 
     async def stop(self) -> None:
+        # 後始末は最優先しない: 個別の close 失敗で止まらず他に続ける
         for session in list(self._sessions):
-            try:
+            with contextlib.suppress(Exception):
                 session.close()
-            except Exception:  # pragma: no cover - 後始末は最優先しない
-                pass
+        # SDK セッション自体の close は Phase 1 (SessionManager) で扱う
         self._sessions.clear()
         if self._client is not None:
             try:

@@ -7,11 +7,11 @@ SDK のイベント型は ``app.agent`` の内側に閉じ込め、API 層・サ
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class AgentEventType(str, Enum):
+class AgentEventType(StrEnum):
     """UI や永続化へ渡すイベントの種類。"""
 
     DELTA = "delta"

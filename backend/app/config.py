@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ from pydantic import BaseModel, field_validator
 GITHUB_MCP_SERVER_NAME = "github-mcp-server"
 
 
-class ProviderKind(str, Enum):
+class ProviderKind(StrEnum):
     """対応する LLM プロバイダー種別 (§7.1)."""
 
     COPILOT = "copilot"
