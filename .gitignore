@@ -1,0 +1,21 @@
+# Python 関連
+__pycache__/
+*.py[oc]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 実行時に生成されるデータ (ルール Markdown・SQLite・Copilot SDK のランタイム状態)
+data/
+
+# 秘密情報 (API キー・トークンは .env で管理しコミットしない)
+.env
+.env.local
+.env.*.local
+
+# 検証用の一時スクリプトと出力
+.spike/
+
+# エディタ・OS 生成物
+.DS_Store
+*.log
