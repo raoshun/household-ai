@@ -2,27 +2,53 @@
 # Docker 環境内で実行する" に対応)。API サーバー (backend/app/main.py) は Phase 1 のため、
 # ここでは import 確認・lint・unit test と Custom Tool の live proof を Docker で回す。
 #
-# 実行例:
-#   docker compose run --rm gate     # import + ruff + pytest (85 tests)
-#   docker compose run --rm runtime  # 既定コマンド: import app.agent 確認
-#   docker compose run --rm proof    # ホストの Ollama を使う live proof
+# 実行例 (make 経由を推奨. 生の docker compose でも同じ):
+#   make gate                        # import + lint + unit test (既定の検証コマンド)
+#   make up                          # 既定の up: gate / proof は起動しない
+#   make proof                       # ホストの Ollama を使う live proof
 #
-# proof は秘密情報をコミットせず、ホスト環境の AI_API_KEY を差し替えて使う:
-#   AI_API_KEY=<key> docker compose run --rm proof
-# Ollama 利用時は AI_API_KEY が必要ないため dummy のままでも動く。
-
+# gate と proof は profiles ["checks"] で分離してあるため `docker compose up -d` では起動しない。
+# proof は秘密情報をコミットせず、ホストの環境変数 (または project dir の .env、gitignore 済み)
+# から ${...} 経由で差し込む。Ollama 利用時は AI_API_KEY が必要ないため dummy のままでも動く。
+# 2026-11-10 実測: BYOK の chat と Custom Tool 実行には GitHub 凭证が不要 (凭证なしでも成功)。
+# 凭证が必要になるのは GitHub コネクタ / Connect 系を使う経路だけで、Phase 2 の検証 (#4) に送る。
 services:
   runtime:
     build:
       context: .
       dockerfile: backend/Dockerfile
     image: household-ai-runtime-test:0.1.0
+    volumes:
+      # Phase 1 の API サーバー稼働に備え、SQLite state 置き場は named volume に置く
+      # (:ro bind は image 内の .venv を隠すため避ける)
+      - household-data:/app/data
+    environment:
+      AI_PROVIDER: ollama
+      AI_MODEL: ${AI_MODEL:-gemma4:e2b}
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      # SDK が読む凭证 env は COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN のみ (1.0.29 実測)。
+      # BYOK の chat と Custom Tools は凭证なしで動くため、既定は空のままにできる。
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-900}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    # Phase 1 で FastAPI 起動に置き換える。Phase 0 は import 確認後に idle で待つ。
+    command:
+      - sh
+      - -c
+      - >-
+        python -c "import app.agent; print('import app.agent ok')"
+        && echo "Phase 0 runtime ready (no API yet); idling" && sleep infinity
 
   gate:
+    profiles: ["checks"]
     build:
       context: .
       dockerfile: backend/Dockerfile
     image: household-ai-runtime-test:0.1.0
+    # backend/pyproject.toml が pytest 設定 (testpaths / pythonpath / asyncio_mode) を
+    # 持つため、rootdir が backend/ になるよう workdir で引数なし実行する。
     command:
       - sh
       - -c
@@ -30,10 +56,10 @@ services:
         python -c "import app.agent; print('import app.agent ok')"
         && ruff check --config pyproject.toml app ../tests --output-format=concise
         && ruff format --check --config pyproject.toml app ../tests
-        && python -m pytest -q ../tests -c pyproject.toml
-        -p no:cacheprovider -p no:randomly --tb=short -rf
+        && python -m pytest -q -p no:cacheprovider --tb=short -rf
 
   proof:
+    profiles: ["checks"]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -46,12 +72,23 @@ services:
       HOUSEHOLD_TOOL_POLICY: ${HOUSEHOLD_TOOL_POLICY:-registered}
       DATA_DIR: /tmp/proof-data
       COPILOT_RUNTIME_DIR: /tmp/proof-runtime
+      # 凭证なしでも proof は成功する (2026-11-10 実測)。GitHub コネクタ / Connect を試すときにのみ
+      # COPILOT_GITHUB_TOKEN を渡す。ファイル経由の指定 (COPILOT_GITHUB_TOKEN_FILE) は 1.0.29 では
+      # サポートされていない。
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
       SESSION_IDLE_TIMEOUT_SECONDS: "600"
       AGENT_TURN_TIMEOUT_SECONDS: "240"
     extra_hosts:
       - host.docker.internal:host-gateway
+    # proof の状態は container 内のみ (/tmp は world-writable、/app/data は image 内で
+    # app owner)。named volume を /tmp/proof-runtime 等へ mount すると root 保管になり
+    # non-root の container が SDK の session dir へ書き込めない。リポジトリを /app へ
+    # bind mount するのも image 内の .venv を隠すため避ける (./skills は COPY 済み)。
     command:
       - timeout
       - "900"
       - python
       - /app/tests/proofs/phase0_live_proof.py
+
+volumes:
+  household-data:
