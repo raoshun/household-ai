@@ -27,7 +27,7 @@ proof: ## Custom Tool / permission の live proof を Docker で実行
 	$(COMPOSE) --profile checks run --rm proof
 
 probe: ## pinned SDK の API 面を実測 (pinned image 内で実行)
-	docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py
+	@docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py
 
 lint: ## gate の lint 工程だけを実行
 	docker run --rm $(IMAGE) sh -c "ruff check --config pyproject.toml app ../tests --output-format=concise && ruff format --check --config pyproject.toml app ../tests"
