@@ -1,0 +1,237 @@
+"""AgentRuntime 経由の実証: registered-name policy でも Custom Tool が実行され、
+内蔵 file/shell tool と MCP が無効なことを 1 回の run で示す (Issue #1 完了条件 3・4)。
+
+実行 (host):
+  HOUSEHOLD_TOOL_POLICY=registered AI_PROVIDER=ollama AI_MODEL=gemma4:e2b \
+    OLLAMA_BASE_URL=http://localhost:11434/v1 AI_API_KEY=local-dummy \
+    .venv/bin/python tests/proofs/phase0_live_proof.py registered
+
+実行 (Docker): docker compose run --rm proof
+"""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "backend"))
+
+from app.agent.provider import CopilotAgentSession, CustomToolDeclaration
+from app.agent.runtime import AgentRuntime
+from app.config import load_settings
+
+MODEL = os.environ.get("AI_MODEL", "gemma4:e2b")
+TOOL_NAME = "household_list_housework"
+PROMPT_TOOL = (
+    f"{TOOL_NAME} ツールを必ず 1 回呼び出して、家用家事の一覧を取得し、"
+    "3 項目を日本語で伝えてください。ツールを使わずに答えないでください。"
+)
+PROMPT_SHELL = (
+    "シェルを実行して uname -a の出力を確認し、その結果をそのまま教えてください。"
+)
+
+raw_events: list[Any] = []
+handler_calls: list[dict[str, Any]] = []
+
+_ORIGINAL_HANDLE = CopilotAgentSession._handle_sdk_event
+
+
+def _spy_handle(self: CopilotAgentSession, sdk_event: Any) -> None:
+    raw_events.append(sdk_event)
+    _ORIGINAL_HANDLE(self, sdk_event)
+
+
+CopilotAgentSession._handle_sdk_event = _spy_handle  # type: ignore[method-assign]
+
+
+def build_declaration() -> CustomToolDeclaration:
+    async def handler(tool_name: str, arguments: dict[str, Any]) -> str:
+        handler_calls.append({"tool": tool_name, "arguments": dict(arguments)})
+        print(
+            f"[proof] handler 実行 tool_name={tool_name} arguments={arguments}",
+            flush=True,
+        )
+        return "食器洗い: 週 3 回\nゴミ出し: 毎週月曜\n浴室掃除: 週 1 回"
+
+    return CustomToolDeclaration(
+        name=TOOL_NAME,
+        description=(
+            "List registered housework items. Call this before answering about "
+            "家用家事."
+        ),
+        handler=handler,
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "家用家事の名前 (例: 家用家事)",
+                }
+            },
+            "required": ["name"],
+        },
+        approval_mode="ask",
+    )
+
+
+def dump_disabled_tools() -> list[str]:
+    lines: list[str] = []
+    for ev in raw_events:
+        data = getattr(ev, "data", None)
+        if getattr(data, "info_type", None) == "configuration":
+            message = getattr(data, "message", "") or ""
+            if "Disabled tools" in message:
+                lines.append(message)
+    return lines
+
+
+def dump_tool_events() -> None:
+    for ev in raw_events:
+        etype = str(getattr(ev, "type", ""))
+        if "tool" not in etype.lower() and "permission" not in etype.lower():
+            continue
+        data = getattr(ev, "data", None)
+        if isinstance(data, dict):
+            summary = json.dumps(data, ensure_ascii=False, default=str)[:400]
+        else:
+            summary = ", ".join(
+                f"{k}={v!r}"
+                for k, v in getattr(data, "__dict__", {}).items()
+                if not k.startswith("_") and v is not None
+            )[:400]
+        print(f"[proof] ev {etype}: {summary}", flush=True)
+
+
+def summarize(tag: str) -> None:
+    types = collections.Counter(str(getattr(ev, "type", "?")) for ev in raw_events)
+    print(f"\n===== proof [{tag}] =====", flush=True)
+    print(f"[proof] raw_event_count={len(raw_events)}", flush=True)
+    for info in dump_disabled_tools():
+        print(f"[proof] {info}", flush=True)
+    print(
+        f"[proof] sdk_types={', '.join(f'{k}:{v}' for k, v in sorted(types.items()))}",
+        flush=True,
+    )
+    print(
+        "[proof] permission_events="
+        + ", ".join(
+            str(getattr(ev, "type", "?"))
+            for ev in raw_events
+            if "permission" in str(getattr(ev, "type", "")).lower()
+            or "Permission" in type(ev).__name__
+        ),
+        flush=True,
+    )
+    denied = [
+        ev
+        for ev in raw_events
+        if "denied" in str(getattr(ev, "data", "")).lower()
+        or "denied" in str(getattr(ev, "type", "")).lower()
+    ]
+    print(f"[proof] denied_like_events={len(denied)}", flush=True)
+    for ev in denied[:5]:
+        print(f"[proof]   {type(ev).__name__} {ev}", flush=True)
+    print(f"[proof] handler_calls={handler_calls}", flush=True)
+    dump_tool_events()
+
+
+async def run_policy(tag: str) -> int:
+    raw_events.clear()
+    handler_calls.clear()
+    settings = load_settings(REPO)
+    print(
+        f"[proof] [{tag}] policy={os.environ.get('HOUSEHOLD_TOOL_POLICY', 'registered')}"
+        f" provider={settings.provider} model={MODEL}"
+        f" base_url={settings.byok_base_url} skills={settings.enable_skills}",
+        flush=True,
+    )
+    async with AgentRuntime(settings) as runtime:
+        health = await runtime.health_check()
+        print(f"[proof] health ready={health.ready} detail={health.detail}", flush=True)
+        try:
+            models = await runtime.list_models()
+            print(f"[proof] list_models={models}", flush=True)
+        except Exception as exc:  # noqa: BLE001 (SDK 失敗を driver で報告するため広域に捕まえる)
+            print(f"[proof] list_models 失敗 {type(exc).__name__}: {exc}", flush=True)
+
+        handle = await runtime.create_session(
+            model=MODEL,
+            tools=[build_declaration()],
+            system_message=(
+                "あなたは家庭内ルートを支援するアシスタントです。家用家事の質問には"
+                f"必ず {TOOL_NAME} ツールを呼び出して答えください。"
+            ),
+        )
+        print(f"[proof] session_id={handle.session_id}", flush=True)
+        snapshot = runtime.snapshot(handle.session_id)
+        print(f"[proof] snapshot={snapshot}", flush=True)
+
+        turn = await runtime.send_message(handle.session_id, PROMPT_TOOL)
+        print(
+            f"[proof] turn1 aborted={turn.aborted} tool_calls={turn.tool_calls}"
+            f" events={len(turn.events)}",
+            flush=True,
+        )
+        print(
+            f"[proof] turn1 text={(turn.text or '')[:300]!r}",
+            flush=True,
+        )
+        summarize(f"{tag}/tool-turn")
+
+        turn2 = await runtime.send_message(handle.session_id, PROMPT_SHELL)
+        print(
+            f"[proof] turn2 aborted={turn2.aborted} tool_calls={turn2.tool_calls}"
+            f" events={len(turn2.events)}",
+            flush=True,
+        )
+        print(f"[proof] turn2 text={(turn2.text or '')[:300]!r}", flush=True)
+        builtin_names = {
+            "bash",
+            "run_bash",
+            "read_bash",
+            "stop_bash",
+            "view",
+            "edit",
+            "write",
+            "create",
+            "grep",
+            "glob",
+            "web_fetch",
+            "sql",
+        }
+        shell_calls = [
+            str(call) for call in turn2.tool_calls if str(call).lower() in builtin_names
+        ]
+        print(f"[proof] built-in_shell_calls={shell_calls}", flush=True)
+        summarize(f"{tag}/shell-attempt")
+
+        await runtime.close_session(handle.session_id)
+
+    ok = (
+        bool(handler_calls)
+        and TOOL_NAME in [str(call) for call in turn.tool_calls]
+        and not shell_calls
+    )
+    print(f"[proof] RESULT [{tag}] ok={ok}", flush=True)
+    return 0 if ok else 1
+
+
+async def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(name)s %(message)s",
+        stream=sys.stdout,
+    )
+    tag = sys.argv[1] if len(sys.argv) > 1 else "registered"
+    return await run_policy(tag)
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
