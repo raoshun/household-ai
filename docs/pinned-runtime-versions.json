@@ -4,6 +4,8 @@
   "generated_at": "2026-11-11",
   "sdk_version": "1.0.29",
   "cli_version": "1.0.107",
+  "runtime_platform": "linux-x64",
+  "runtime_platform_note": "home PC (Ubuntu 24.04 x86_64 glibc) build host 向け target",
   "verification_status": "cli_version は pinned SDK 1.0.29 の probe 実測値 (runtime_cli_ver). digest は release v1.0.107 の SHA256SUMS.txt から取得",
   "sources": {
     "sdk_version": "backend/pyproject.toml [sdk] github-copilot-sdk==1.0.29",
@@ -65,8 +67,11 @@
     "sha256"
   ],
   "verification": {
-    "dockerfile_assertion": "backend/Dockerfile が cli_version と runtime_platforms を実測値と照合",
-    "live_proof": "docker compose run --rm gateway python tests/proofs/phase0_live_proof.py"
+    "build_gate": "backend/Dockerfile build で python /app/tests/proofs/verify_pinned_manifest.py を実行 (make verify-pinned でも確認可)",
+    "live_proof": "make proof (docker compose run --rm proof python /app/tests/proofs/phase0_live_proof.py)",
+    "offline_runtime_proof": "make proof-offline (docker run --network none で runtime 起動と Custom Tool 登録を確認)",
+    "mirror_build": "make runtime-mirror && make build-offline (COPILOT_CLI_DOWNLOAD_BASE_URL=http://172.17.0.1:<port>)",
+    "negative_gates": "manifest 改ざん / mirror URL 化 / staging digest 不一致 / network 遮断 download 失敗の 4 系統すべて failure を確認"
   },
   "release_asset_names": {
     "linux-x64": "github-copilot-1.0.107-linux-x64.tgz",
