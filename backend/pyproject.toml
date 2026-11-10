@@ -22,10 +22,6 @@ dev = [
     "ruff==0.17.4",
 ]
 
-[project.scripts]
-household-chat = "app.cli:main"
-household-verify = "app.verify:main"
-
 [build-system]
 requires = ["setuptools==75.6.2"]
 build-backend = "setuptools.build_meta"
