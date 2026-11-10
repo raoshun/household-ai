@@ -38,6 +38,9 @@ ENV_NAMES = (
     "SESSION_IDLE_TIMEOUT_SECONDS",
     "HOST",
     "PORT",
+    "AGENT_TURN_TIMEOUT_SECONDS",
+    "SKILLS_ENABLED",
+    "SKILLS_DISABLED",
 )
 
 
@@ -156,3 +159,37 @@ def test_load_settings_rejects_unknown_provider(monkeypatch: MonkeyPatch) -> Non
     monkeypatch.setenv("AI_PROVIDER", "gemini")
     with pytest.raises(ValueError, match="gemini"):
         load_settings(Path.cwd())
+
+
+def test_agent_timeout_and_skills_are_configurable_by_env(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("AGENT_TURN_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("SKILLS_ENABLED", "off")
+    monkeypatch.setenv("SKILLS_DISABLED", "builtin:brainstorming, app-skill")
+
+    settings = load_settings(tmp_path)
+
+    assert settings.turn_timeout_seconds == 45
+    assert settings.enable_skills is False
+    assert settings.disabled_skills == ("builtin:brainstorming", "app-skill")
+
+
+def test_bad_integer_env_becomes_setting_error(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("SESSION_IDLE_TIMEOUT_SECONDS", "soon")
+
+    with pytest.raises(ValueError, match="SESSION_IDLE_TIMEOUT_SECONDS"):
+        load_settings(tmp_path)
+
+
+def test_timeout_and_port_ranges_are_validated() -> None:
+    with pytest.raises(ValidationError):
+        Settings(turn_timeout_seconds=1)
+    with pytest.raises(ValidationError):
+        Settings(session_idle_timeout_seconds=3601)
+    with pytest.raises(ValidationError):
+        Settings(port=70_000)

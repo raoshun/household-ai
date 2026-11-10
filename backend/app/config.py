@@ -17,6 +17,10 @@ from pydantic import BaseModel, field_validator
 # したがって github_token は none に初期化し、明示設定時のみ使う。
 GITHUB_MCP_SERVER_NAME = "github-mcp-server"
 
+# 1.0.29 では session.idle がターン完了後にしか来ないため、ターン終了まで
+# 待ってよい上限を明示する (README §7.2 の 180 秒を採用)。
+DEFAULT_TURN_TIMEOUT_SECONDS = 180
+
 
 class ProviderKind(StrEnum):
     """対応する LLM プロバイダー種別 (§7.1)."""
@@ -55,13 +59,30 @@ class Settings(BaseModel, frozen=True):
     # --- Copilot SDK 実行設定 ---
     log_level: str = "info"
     session_idle_timeout_seconds: int = 900
+    turn_timeout_seconds: int = DEFAULT_TURN_TIMEOUT_SECONDS
     disabled_mcp_servers: tuple[str, ...] = (GITHUB_MCP_SERVER_NAME,)
     enable_skills: bool = True
+    disabled_skills: tuple[str, ...] = ()
     session_store_enabled: bool = False
 
     # --- HTTP サーバー ---
     host: str = "127.0.0.1"
     port: int = 8000
+
+    @field_validator("session_idle_timeout_seconds", "turn_timeout_seconds")
+    @classmethod
+    def _valid_timeout(cls, value: int) -> int:
+        """1.0.29 で実際にターン完了まで待ち受ける秒数のため下限を設ける。"""
+        if not 10 <= value <= 3600:
+            raise ValueError("タイムアウトは 10〜3600 秒の範囲で設定する")
+        return value
+
+    @field_validator("port")
+    @classmethod
+    def _valid_port(cls, value: int) -> int:
+        if not 1 <= value <= 65535:
+            raise ValueError("PORT は 1〜65535 の範囲で設定する")
+        return value
 
     @field_validator("log_level")
     @classmethod
@@ -108,6 +129,25 @@ def _env(name: str, default: str) -> str:
     return default if value is None or value == "" else value
 
 
+def _env_int(name: str, default: int) -> int:
+    """整数環境変数を安全に読む (不正値は設定エラーとして報告する)。"""
+    raw = _env(name, str(default))
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} は整数で設定してください (受け取った値: {raw!r})"
+        ) from exc
+
+
+def _env_list(name: str) -> tuple[str, ...]:
+    """カンマ区切りの環境変数を名前のタプルへ変換する。"""
+    raw = _env_opt(name)
+    if raw is None:
+        return ()
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 def _env_opt(name: str) -> str | None:
     value = os.environ.get(name)
     return value if value else None
@@ -143,11 +183,14 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             _env("COPILOT_RUNTIME_DIR", str(root / "data" / "copilot-runtime"))
         ),
         log_level=_env("LOG_LEVEL", "info"),
-        session_idle_timeout_seconds=int(
-            _env("SESSION_IDLE_TIMEOUT_SECONDS", "900")
+        session_idle_timeout_seconds=_env_int("SESSION_IDLE_TIMEOUT_SECONDS", 900),
+        # ターン完了まで待ってよい上限秒数 (§7.2) と skills 方針
+        turn_timeout_seconds=_env_int(
+            "AGENT_TURN_TIMEOUT_SECONDS", DEFAULT_TURN_TIMEOUT_SECONDS
         ),
-        session_store_enabled=_env("COPILOT_SESSION_STORE", "off").lower()
-        in truthy,
+        enable_skills=_env("SKILLS_ENABLED", "on").lower() in truthy,
+        disabled_skills=_env_list("SKILLS_DISABLED"),
+        session_store_enabled=_env("COPILOT_SESSION_STORE", "off").lower() in truthy,
         host=_env("HOST", "127.0.0.1"),
-        port=int(_env("PORT", "8000")),
+        port=_env_int("PORT", 8000),
     )
