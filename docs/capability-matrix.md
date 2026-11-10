@@ -151,8 +151,10 @@ Phase 0 で**未確認** (docs claim / spike 由来): `session.status`, `session
 - download 先: `https://github.com/github/copilot-cli/releases/download/v<cli_ver>/` 配下の
   `SHA256SUMS.txt` と `github-copilot-<cli_ver>-<runtime_platform>.tgz` (hostless 版. 1.0.107 の
   linux-x64 asset は 96,303,322 bytes = sha256 `a1e3acdb...af057`. SEA 版 `copilot-<platform>.tar.gz`
-  は hostless asset が 404 の場合のみ fallback). `_UNSTABLE_VERSION` に一致する version は別 repo
-  (`copilot-sdk`, asset 名 `github-copilot-sdk-*`, tag `runtime-<ver>`) を指す.
+  は hostless asset が 404 の場合のみ fallback). `_UNSTABLE_VERSION` の fullmatch は
+  `(?:-unstable|-(0|[1-9][0-9]*)\.unstable)\.r[1-9][0-9]*\.g[0-9a-f]{7}` (実測) で、一致時は
+  repo `copilot-sdk` / tag `runtime-<ver>` を指す (stable は repo `copilot-cli` / tag `v<ver>`).
+  `COPILOT_CLI_DOWNLOAD_BASE_URL` は tag より前の base として尊重される (`get_download_url`).
 - checksum 検証: SHA-256 を `SHA256SUMS.txt` と照合し、entry は `<sha>  <file>` と `*<file>`
   (binary-mode prefix) の両方を受け付ける. 一致なし・entry 無し・HTTP 失敗は RuntimeError.
   download 失敗時は download 先を削除、extract 済み cache dir は保持 (再実行で verify 成功まで retry).
@@ -182,7 +184,8 @@ Phase 0 で**未確認** (docs claim / spike 由来): `session.status`, `session
   `COPILOT_CLI_PATH` + `ensure_runtime_library()` の pair を使う。
 - runtime platform 名 (`get_runtime_platform()`): linux-x86_64→linux-x64、linux-aarch64→linux-arm64、
   darwin-x86_64→darwin-x64、darwin-arm64→darwin-arm64、win32-AMD64→win32-x64、win32-ARM64→win32-arm64。
-  musl では linux-x64→linux-x64-musl、linux-arm64→linux-arm64-musl (glibc build が reject された場合のみ).
+  musl host では machine 名 (x86_64 / aarch64 / arm64) から linuxmusl-x64 / linuxmusl-arm64 となり、
+  release asset 名 `github-copilot-<ver>-linuxmusl-<arch>.tgz` と一致する (SHA256SUMS.txt の 8 asset と照合).
 - pinned が尊重する env (`package_env_tokens` 実測): `COPILOT_CLI_PATH`、`COPILOT_CLI_EXTRACT_DIR`、
   `COPILOT_SKIP_CLI_DOWNLOAD` (ON/1/true/yes で download を short-circuit)、
   `COPILOT_CLI_DOWNLOAD_BASE_URL` (release base 先 override = mirror 運用の根拠)、
