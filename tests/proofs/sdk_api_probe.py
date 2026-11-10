@@ -51,34 +51,75 @@ CLIENT_KWARGS = [
 ]
 
 SESSION_KWARGS = [
+    # Phase 0 が使う kwargs
     "available_tools",
+    "excluded_tools",
+    "tools",
+    "model",
+    "provider",
+    "working_directory",
+    "system_message",
+    "on_permission_request",
+    "skill_directories",
+    "disabled_skills",
+    "disabled_mcp_servers",
+    "enable_session_store",
+    "enable_skills",
+    "streaming",
+    "session_limits",
+    "large_output",
+    "hooks",
+    "agent",
+    "context_tier",
+    # 状態・sandbox・管理設定の制御点 (docs claim の実測)
+    "sandbox_config",
+    "managed_settings",
+    "enable_managed_settings",
+    "excluded_managed_settings",
+    "enable_host_git_operations",
+    "trust_working_directory",
+    "session_id",
+    "name",
+    "reasoning_effort",
+    "skill_provider",
+    "included_builtin_skills",
+    "custom_agents",
+    "memory",
+    "mcp_servers",
+    "models",
+    "providers",
+    "feature_flags",
+    "config_directory",
+    "agent_directories",
+    "instruction_directories",
+    "plugin_directories",
+    "session_store",
+    "session_store_dir",
+    "session_snapshot",
+    "state_snapshot",
+    "enable_session_telemetry",
+    "skip_embedding_retrieval",
+    "embedding_cache_storage",
+    "mcp_oauth_token_storage",
+    "custom_agents_local_only",
+    "enable_config_discovery",
+    "enable_on_demand_instruction_discovery",
+    "enable_file_hooks",
+    "enable_file_change_tracking",
+    "skip_custom_instructions",
+    "interactive_user",
+    # docs site の claim (pinned に無いことを証明して禁止方針へ変換)
     "approval_mode",
     "permission_handler",
     "base_tools",
     "tool_mode",
     "additional_tools",
-    "enable_session_store",
-    "infinite_sessions",
-    "session_idle_timeout_seconds",
-    "working_directory",
-    "model",
-    "provider",
     "settings",
-    "on_permission_request",
-    "excluded_tools",
-    "context_tier",
-    "agent",
-    "streaming",
     "features",
-    "system_message",
     "customInstructions",
-    "disabled_mcp_servers",
-    "skill_directories",
-    "disabled_skills",
-    "hooks",
-    "session_limits",
-    "infinite_sessions",
-    "large_output",
+    "session_idle_timeout_seconds",
+    "permission_mode",
+    "env",
 ]
 
 TOOL_KWARGS = [
@@ -165,6 +206,34 @@ EVENT_PAYLOAD_NAMES = [
     "SessionIdleData",
 ]
 
+# docs claim の session store / state API 名。pinned 1.0.29 での実在を実測する。
+STORE_SYMBOLS = [
+    "LocalSessionStore",
+    "InMemorySessionStore",
+    "SessionStore",
+    "SessionStoreLimits",
+    "ResolvedSessionSnapshot",
+    "SessionSnapshot",
+    "ResumeSessionResult",
+]
+
+CLIENT_STORE_METHODS = [
+    "resume_session",
+    "list_sessions",
+    "delete_session",
+    "list_available_builtin_tools",
+]
+
+# pinned の download 機構が公開する API 名。
+CLI_PATH_API = [
+    "download_cli",
+    "ensure_runtime_wrapper",
+    "ensure_runtime_library",
+    "get_cache_dir",
+    "get_cached_cli_path",
+    "get_or_download_cli",
+]
+
 GAP_TOKENS = [
     ".copilot-cli",
     "COPILOT_CACHE_HOME",
@@ -239,6 +308,85 @@ def _package_grep(tokens: list[str]) -> dict[str, list[str]]:
         hits = [name for name, text in sources if token in text]
         found[token] = hits[:5]
     return found
+
+
+def _runtime_paths() -> dict[str, Any]:
+    """runtime cache layout を pinned の API から実測 (network アクセス無し)。
+
+    絶対 path は環境依存なので `<cache-root>` へ mask し、相対 layout だけを
+    記録する (host / container で byte 単位の突合可能にするため)。
+    """
+    version = cli_ver.CLI_VERSION
+    root = cli_dl.get_cache_dir()
+    version_dir = cli_dl.get_cache_dir(version)
+    pair_dir = version_dir / "prebuilds" / cli_ver.get_runtime_platform()
+    wrapper = cli_ver.get_cli_binary_name()
+    wrapper_name = (
+        "copilot-runtime.exe" if sys.platform == "win32" else "copilot-runtime"
+    )
+    cached = cli_dl.get_cached_cli_path()
+    return {
+        "api": _present(CLI_PATH_API, cli_dl),
+        "platform_runtime": cli_ver.get_runtime_platform(),
+        "root_dir_name": cli_dl._CACHE_DIR_NAME,
+        "cache_root_masked": "<cache-root>/" + cli_dl._CACHE_DIR_NAME + "/cli",
+        "cache_root_candidates": [
+            "COPILOT_CLI_EXTRACT_DIR",
+            "XDG_CACHE_HOME",
+            "HOME/.cache",
+        ],
+        "version_dir_relative": version_dir.relative_to(root).as_posix(),
+        "pair_dir_relative": pair_dir.relative_to(root).as_posix(),
+        "compat_entrypoint_name": wrapper,
+        "runtime_wrapper_name": wrapper_name,
+        "runtime_library_name": "runtime.node",
+        "hostless_assets_marker": cli_dl._HOSTLESS_ASSETS_MARKER,
+        "compat_entrypoint_exists": (pair_dir / wrapper).is_file(),
+        "runtime_wrapper_exists": (pair_dir / wrapper_name).is_file(),
+        "runtime_library_exists": (pair_dir / "runtime.node").is_file(),
+        "hostless_assets_marker_exists": (
+            pair_dir / cli_dl._HOSTLESS_ASSETS_MARKER
+        ).is_file(),
+        "cached_cli_path_present": cached is not None,
+        "bundle_complete": cli_dl._runtime_bundle_is_complete(pair_dir, wrapper),
+        "env_knobs": {
+            "extract_dir": "COPILOT_CLI_EXTRACT_DIR",
+            "skip_download": "COPILOT_SKIP_CLI_DOWNLOAD",
+            "download_base_url": "COPILOT_CLI_DOWNLOAD_BASE_URL",
+            "cli_path": "COPILOT_CLI_PATH",
+        },
+    }
+
+
+def _sdk_modules() -> list[str]:
+    pkg_dir = Path(copilot.__file__).parent
+    modules = [path.stem for path in sorted(pkg_dir.glob("*.py"))]
+    modules += [path.name for path in sorted(pkg_dir.iterdir()) if path.is_dir()]
+    return modules
+
+
+def _session_store_api() -> dict[str, Any]:
+    """docs claim の session store API が pinned にあるか実測 (§6/§15 対応)。"""
+    rpc_module = sys.modules["copilot.generated.rpc"]
+    modules = _sdk_modules()
+    return {
+        "sdk_modules": modules,
+        "session_store_module_present": "session_store" in modules,
+        "sdk_symbols": _present(STORE_SYMBOLS, copilot),
+        "rpc_symbols": _present(STORE_SYMBOLS, rpc_module),
+        "client_methods": {
+            name: callable(getattr(copilot.CopilotClient, name, None))
+            for name in CLIENT_STORE_METHODS
+        },
+        "session_methods": {
+            name: hasattr(CopilotSession, name)
+            for name in ("resume", "close", "dispose", "snapshot")
+        },
+        "create_session_kwargs": {
+            name: name in _params(copilot.CopilotClient.create_session)
+            for name in ("session_store", "session_store_dir", "session_snapshot")
+        },
+    }
 
 
 def _runtime_cli() -> dict[str, Any]:
@@ -344,6 +492,8 @@ def main() -> None:
             "payload_types": _present(EVENT_PAYLOAD_NAMES, events_mod),
         },
         "runtime_cli": _runtime_cli(),
+        "runtime_paths": _runtime_paths(),
+        "session_store": _session_store_api(),
         "package_env_tokens": _env_tokens(),
         "docs_gap": _package_grep(GAP_TOKENS),
     }
