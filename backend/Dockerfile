@@ -9,11 +9,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/app
 
-# pyproject だけ先に入れて依存レイヤーをキャッシュ化する。
+# pyproject と uv.lock を先に入れて依存レイヤーをキャッシュ化する (§18.12 再現性)。
 WORKDIR /app/backend
-COPY backend/pyproject.toml ./pyproject.toml
+COPY backend/pyproject.toml backend/uv.lock ./
+COPY backend/README.md ./README.md
 RUN adduser --disabled-password --gecos "" --uid 10001 app \
-    && uv sync --project /app/backend --extra dev --no-install-project \
+    && uv sync --project /app/backend --extra dev --no-install-project --frozen \
     && mkdir -p /app/data/conversations /app/data/rules /app/data/copilot-runtime \
     && chown -R app:app /app
 
