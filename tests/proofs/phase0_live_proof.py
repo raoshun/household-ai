@@ -23,9 +23,12 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "backend"))
 
-from app.agent.provider import CopilotAgentSession, CustomToolDeclaration
-from app.agent.runtime import AgentRuntime
-from app.config import load_settings
+from app.agent.provider import (  # noqa: E402 (sys.path 操作後に import する)
+    CopilotAgentSession,
+    CustomToolDeclaration,
+)
+from app.agent.runtime import AgentRuntime  # noqa: E402
+from app.config import load_settings  # noqa: E402
 
 MODEL = os.environ.get("AI_MODEL", "gemma4:e2b")
 TOOL_NAME = "household_list_housework"
@@ -146,8 +149,9 @@ async def run_policy(tag: str) -> int:
     raw_events.clear()
     handler_calls.clear()
     settings = load_settings(REPO)
+    policy = os.environ.get("HOUSEHOLD_TOOL_POLICY", "registered")
     print(
-        f"[proof] [{tag}] policy={os.environ.get('HOUSEHOLD_TOOL_POLICY', 'registered')}"
+        f"[proof] [{tag}] policy={policy}"
         f" provider={settings.provider} model={MODEL}"
         f" base_url={settings.byok_base_url} skills={settings.enable_skills}",
         flush=True,
@@ -158,7 +162,7 @@ async def run_policy(tag: str) -> int:
         try:
             models = await runtime.list_models()
             print(f"[proof] list_models={models}", flush=True)
-        except Exception as exc:  # noqa: BLE001 (SDK 失敗を driver で報告するため広域に捕まえる)
+        except (NotImplementedError, RuntimeError, ValueError) as exc:
             print(f"[proof] list_models 失敗 {type(exc).__name__}: {exc}", flush=True)
 
         handle = await runtime.create_session(
