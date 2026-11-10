@@ -1,0 +1,20 @@
+# ビルド文脈 (リポジトリルート) を最小化するための除外一覧。
+# 実行時データ・秘密情報・ホストの venv はイメージへ copy しない。
+.git
+.github
+.env
+.env.*
+.venv/
+.venv*/
+data/
+copilot-runtime/
+logs/
+session-state/
+installed-plugins/
+.spike/
+__pycache__/
+*.py[oc]
+.pytest_cache/
+.ruff_cache/
+frontmatter.json
+*.zcode.*

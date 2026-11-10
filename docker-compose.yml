@@ -1,0 +1,57 @@
+# Phase 0 検証用の Docker 設定 (§15 Phase 0 完了条件の "lint と unit test は
+# Docker 環境内で実行する" に対応)。API サーバー (backend/app/main.py) は Phase 1 のため、
+# ここでは import 確認・lint・unit test と Custom Tool の live proof を Docker で回す。
+#
+# 実行例:
+#   docker compose run --rm gate     # import + ruff + pytest (85 tests)
+#   docker compose run --rm runtime  # 既定コマンド: import app.agent 確認
+#   docker compose run --rm proof    # ホストの Ollama を使う live proof
+#
+# proof は秘密情報をコミットせず、ホスト環境の AI_API_KEY を差し替えて使う:
+#   AI_API_KEY=<key> docker compose run --rm proof
+# Ollama 利用時は AI_API_KEY が必要ないため dummy のままでも動く。
+
+services:
+  runtime:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+
+  gate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+    command:
+      - sh
+      - -c
+      - >-
+        python -c "import app.agent; print('import app.agent ok')"
+        && ruff check --config pyproject.toml app ../tests --output-format=concise
+        && ruff format --check --config pyproject.toml app ../tests
+        && python -m pytest -q ../tests -c pyproject.toml
+        -p no:cacheprovider -p no:randomly --tb=short -rf
+
+  proof:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+    environment:
+      AI_PROVIDER: ollama
+      AI_MODEL: ${AI_MODEL:-gemma4:e2b}
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      HOUSEHOLD_TOOL_POLICY: ${HOUSEHOLD_TOOL_POLICY:-registered}
+      DATA_DIR: /tmp/proof-data
+      COPILOT_RUNTIME_DIR: /tmp/proof-runtime
+      SESSION_IDLE_TIMEOUT_SECONDS: "600"
+      AGENT_TURN_TIMEOUT_SECONDS: "240"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    command:
+      - timeout
+      - "900"
+      - python
+      - /app/tests/proofs/phase0_live_proof.py
