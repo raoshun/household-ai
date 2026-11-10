@@ -38,8 +38,13 @@ ENV VIRTUAL_ENV=/app/backend/.venv \
     CLAUDE_CODE_EXTENSIONS_CACHE_DIR=/tmp/xdg-cache/claude-code \
     CLAUDE_CODE_EXTENSIONS_STATE_DIR=/tmp/xdg-state/claude-code
 
-# SDK が起動時にダウンロードする CLI をビルド時に取得して ~/.copilot-cli へキャッシュする (§15)。
-RUN python -m copilot download-runtime \
+# pinned 版 manifest と SDK 実測版を照合してから、CLI runtime を build cache に配置する (§15)。
+# base URL は mirror へ差し替え可能 (capability matrix §9)。既定値は SDK 既定と同一。
+COPY --chown=app:app docs/pinned-runtime-versions.json /app/docs/pinned-runtime-versions.json
+ARG COPILOT_CLI_DOWNLOAD_BASE_URL=https://github.com/github/copilot-cli/releases/download
+ENV COPILOT_CLI_DOWNLOAD_BASE_URL=${COPILOT_CLI_DOWNLOAD_BASE_URL}
+RUN python /app/tests/proofs/verify_pinned_manifest.py \
+    && python -m copilot download-runtime \
     && python -c "from copilot import CopilotClient; print('copilot import ok after CLI setup')"
 
 # 既定コマンドは import ゲート (§15)。API サーバー起動は Phase 1。
