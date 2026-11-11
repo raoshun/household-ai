@@ -216,6 +216,19 @@ make gate-live-proof-claims    # 保存済み evidence を --recheck-evidence �
   内訳は registered (`custom`) 11、unregistered (`none`) 10、
   `tool_cases_distinct` 1
 
+commit 済み evidence (`docs/evidence/live-proof-two-cases.json`, 41,055 bytes) の
+中身を実測した。`make prove-live-proof-claims` で再生成しても commit 済み blob と
+差分が出なかった (同一生成物)。識別子は次のとおりで、model 名だけが残り、host
+の endpoint 情報は残っていない。
+
+| 検索 | 実測 |
+| :--- | :--- |
+| `"base_url": "<redacted>"` | 2 件 (両 case) |
+| `"model": "gemma4:e2b"` | 2 件 |
+| `"session_id"` の値 | 0 件 (key 自体が evidence に無い) |
+| `11434` / `host.docker.internal` / `ollama` (大小無視) | 0 件 |
+| `<masked>` | 0 件 (host 側で別途 mask した副本は commit していない) |
+
 ### 7.2 gate が要求する evidence
 
 registered case (tool_case `custom`): execution start / complete 1 件以上、
@@ -225,9 +238,12 @@ response 1 組、built-in 名 tool 呼び 0 件、shell tool (bash / write_agent
 read_bash / stop_bash / list_bash) の 3 件以上が disabled tools に含まれること、
 `registered_custom_tools` を session tool 登録 flag として扱う。
 
-unregistered case (tool_case `none`): handler call 0 件、execution / outcome
-success / permission pair なし、tool 未登録、session tools 0、shell tools 0 件、
-同名 tool 呼び 0 件。
+unregistered case (tool_case `none`) は tool 未登録 (`registered_custom_tools`
+0)、session tools 0 件のうえで、runtime handler 呼び 0 件、outcome 失敗 1 件以上
+(`tool_outcome_failures >= 1`)、permission pair 0 件を要求する。実測では model
+が tool 名を要求し execution start / complete が 1 件ずつ観測されたが、outcome は
+`success: false` で handler は 1 件も走っていない。gate は execution event の
+不在ではなく、handler 未実行と outcome 失敗を境界 evidence として要求する。
 
 `tool_cases_distinct`: 2 case の tool_case が `custom` と `none` で異なること
 (label は `registered+unregistered/custom+none tool_cases_distinct`)。
