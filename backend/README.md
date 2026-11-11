@@ -1,8 +1,8 @@
 # backend 実行リファレンス（Phase 0）
 
 SDK は pinned 固定: Python 3.12 / `github-copilot-sdk==1.0.29`（CLI runtime 1.0.107）。
-pinned 版の実測 API 面は `docs/phase0-capability-notes.md`、実行証跡は
-`docs/phase0-verification-report.md`（docs site の v1.2.0-beta API docs は pinned より新しいため名前が異なる）。
+pinned 版の実測 API 面は `docs/capability-matrix.md`、実行証跡は
+`docs/evidence/offline-runtime-proof-notes.md`（docs site の v1.2.0-beta API docs は pinned より新しいため名前が異なる）。
 
 ## host 実行（uv 固定）
 
@@ -54,7 +54,7 @@ driver は tag 引数（`sys.argv[1]`）のみ。tool 方針は `HOUSEHOLD_TOOL_
 ## 凭证（GitHub token）の扱い
 
 - BYOK Chat と Custom Tool 実行に GitHub 凭证は**不要**（token 無しで host/Docker とも green。
-  `list_models` だけで "Not authenticated" が出、BYOK では BYOK models を返す）。実測は `docs/phase0-verification-report.md`。
+  `list_models` だけで "Not authenticated" が出、BYOK では BYOK models を返す）。実測は `docs/evidence/offline-runtime-proof-notes.md`。
 - 凭证が要る GitHub connector / Connect 系は Phase 2（Issue #4）で扱う。
 - 1.0.29 が読む env 名は `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`（client の `github_token` 引数でも可）。
   **`COPILOT_GITHUB_TOKEN_FILE` は存在しない**。token を渡すなら host env か project dir の `.env`（compose が読む）で注入する。
@@ -97,6 +97,13 @@ Named volume `household-data` は `/app/data`（image 内 paths）に mount す�
 | `make probe` | pinned image 内で `tests/proofs/sdk_api_probe.py` を実行 |
 | `make proof` | live proof。host env の `AI_api_key` 等を container へ渡す |
 | `make up` / `logs` / `down` | runtime 起動・確認・停止 |
+| `make verify-pinned` | manifest と install 済み SDK / CLI version、release asset digest の整合を確認 |
+| `make runtime-mirror` / `make runtime-serve` | pin 済み runtime asset を mirror へ staging し HTTP serve |
+| `make build-offline` | host mirror だけを source にする offline image build (`--network none`) |
+| `make prove-offline` / `make prove-offline-negative` | §15 の network 遮断証明（compose fail / cache と mirror の digest 一致） |
+| `make prove-offline-runtime` | `--network none` container 内で runtime 起動と Custom Tool 登録を実証 |
+| `make prove-manifest-version-tamper` / `make prove-manifest-digest-tamper` | manifest を改ざんして integrity check が fail することを実証 |
+| `make prove-negative-gates` | 上記 4 本の negative gate を順に実行 |
 
 Proof は `HOME=/home/app` と `/tmp/xdg-*` に state を書く（container 内のみ、host 側へは書かない）。
 Cloudflare 経由の本番運用は `docs/deployment-cloudflare.md`（Phase 2 以降）。

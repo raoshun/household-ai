@@ -4,7 +4,7 @@ Status: pinned `github-copilot-sdk==1.0.29` / runtime 1.0.107 で実測 (2026-11
 Names marked "docs claim" are from <https://github.com/github/copilot-sdk/tree/main/docs> API docs
 (version **v1.2.0-beta**, pinned より新しい). 実在判定の source は `tests/proofs/sdk_api_probe.py`
 の出力 (`docs/evidence/sdk_api_probe_pinned_1.0.29.json`) と live proof
-(`docs/phase0-verification-report.md`). **実測で無かった名前は Phase 0 では使わない.**
+(`docs/evidence/offline-runtime-proof-notes.md`). **実測で無かった名前は Phase 0 では使わない.**
 
 ## 0. Reproducibility の固定
 
@@ -12,7 +12,7 @@ Names marked "docs claim" are from <https://github.com/github/copilot-sdk/tree/m
 | :--- | :--- |
 | host venv / image 内 SDK | `github-copilot-sdk` 1.0.29 (package 名 `copilot`) |
 | image python | 3.12.12 (host venv も 3.12) |
-| CLI runtime binary | 1.0.107 (lock 外. `download-runtime` で download cache から取得) |
+| CLI runtime binary | 1.0.107 (uv.lock 外. `docs/pinned-runtime-versions.json` の version + asset digest で pin し、`download-runtime` cache から取得) |
 | probe 出力 | host と Docker image で byte 単位一致 (`sdk_api_probe_pinned_1.0.29.json`) |
 
 固定手順: `uv sync --frozen --extra dev --no-install-project` (host) / `uv sync --project /app/backend
@@ -117,16 +117,17 @@ declaration は `skip_permission=True` で handler 自体を呼ばせない。
 
 Phase 0 で**未確認** (docs claim / spike 由来): `session.status`, `session.user_cancelled`,
 `assistant.server_tool_progress` 系の一部、`custom_tool.*`. runtime 側 normalize (events.py) に
-含まれない wire 名は proof log で UNKNOWN として観測済み → `docs/phase0-verification-report.md`.
+含まれない wire 名は proof log で UNKNOWN として観測済み → `docs/evidence/offline-runtime-proof-notes.md`.
 
 ## 7. Skills
 
 - `create_session` の `enable_skills` (bool) / `skill_directories` / `disabled_skills` / `skill_provider`
   が pinned に実在 (docs claim うち `include_skills` / `disable_builtin_skills` は**無し**).
-- `session.skills_loaded` event が pinned wire 名として実在。runtime は session start で購読し
-  失敗時に skills_ready=false。
+- `session.skills_loaded` event が pinned wire 名として実在。runtime は event が届いたときだけ
+  `data.skills` を収集し `SessionSnapshot.skills` へ載せる (`provider.py` の `_collect_skills`)。
+  skills の有無を問う flag (`skills_ready` 相当) は Phase 0 の code に存在しない。
 - skills 無効化 (`enable_skills=False`) では `session.skills_loaded` が届かず turn が走る
-  (実測 1 例: 5 turn 完走) → runtime 側 fallback 実装済 (`docs/phase1-reproducibility-gate.md`).
+  (pinned 1.0.29 で未取得を実測)。turn 完走の可否を skills event で判定しない。
 
 ## 8. Auth / credential
 
@@ -134,7 +135,8 @@ Phase 0 で**未確認** (docs claim / spike 由来): `session.status`, `session
   (`copilot/client.py` の env 名 list 実測)。client 引数 `github_token` でも inject 可。
   **`COPILOT_GITHUB_TOKEN_FILE` は存在しない** → file 指定はできない (compose では host env を渡す)。
 - BYOK (provider env) の chat + Custom Tool 実行に GitHub login 不要と実測
-  (host / Docker, token 有無 4 組み green: `docs/phase0-verification-report.md`)。
+  (host / Docker とも token 無しで proof green: `docs/evidence/offline-runtime-proof-notes.md` §4。
+  token あり構成を 組み合わせた網羅 proof は未取得)。
 - `base_directory` (runtime dir) に credential state は永続化されない (token 無しで gate green
   → runtime dir に auth state を要求しない実装) 。
 - `list_models` は BYOK 構成 (token 無し) だと runtime 側で "Not authenticated" になる. 実装は
