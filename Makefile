@@ -11,6 +11,7 @@ EVIDENCE ?= docs/evidence
 .PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror
 .PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
 .PHONY: prove-manifest-version-tamper prove-manifest-digest-tamper
+.PHONY: compose-claims-stage prove-compose-claims prove-compose-claims-tamper gate-compose-claims
 
 help: ## 使い方の一覧
 	@printf '%s\n' "make build | build-offline | up | down | logs | gate | proof | probe | lint | test | fmt"
@@ -63,7 +64,45 @@ test: ## gate の unit test 工程だけを実行 (working tree を mount して
 	docker run --rm $(SRC_MOUNTS) $(IMAGE) sh -c "python -m pytest -q -p no:cacheprovider --tb=short -rf"
 
 fmt: ## host の git 管理 source を image 内の ruff で format (repo を /mnt/repo へ mount)
-	docker run --rm -e RUFF_CACHE_DIR=/tmp/ruff-cache -v $$PWD:/mnt/repo -w /mnt/repo/backend $(IMAGE) sh -c "ruff format app ../tests"
+	docker run --rm --user "$$(id -u):$$(id -g)" -e RUFF_CACHE_DIR=/tmp/ruff-cache -v $$PWD:/mnt/repo -w /mnt/repo/backend $(IMAGE) sh -c "ruff format app ../tests"
+
+# --- §13 docker-compose 構成 claims gate ---------------------------------------
+# README §13 が書く compose 設計 (profile 分離 / 1 pinned image / 秘密を bake しない /
+# data volume / host gateway / gate の working tree ro mount / proof state の /tmp) を
+# claim として機械検証する。expand だけ host の docker compose を使い (gate container には
+# docker CLI が無い)、claims 検査の code は pinned image 内で実行する。
+# expand は --env-file /dev/null で host env の影響を排除し、compose 側の既定値だけを検証する。
+COMPOSE_CLAIM_TMP ?= .local/compose-claims
+COMPOSE_CLAIM_MOUNTS = -v $(CURDIR)/$(COMPOSE_CLAIM_TMP):/gate:ro -v $(CURDIR)/tests:/app/tests:ro -v $(CURDIR)/$(COMPOSE_CLAIM_TMP)/out:/out
+COMPOSE_CLAIM_TAMPER_MODES ?= literal-credential bind-data-dir unprofiled-gate baked-secret-in-image
+
+compose-claims-stage: ## claims 検証に必要な compose / Dockerfile / .dockerignore / expand を staging
+	@mkdir -p $(COMPOSE_CLAIM_TMP)/backend $(COMPOSE_CLAIM_TMP)/out $(EVIDENCE)
+	@$(COMPOSE) -f docker-compose.yml --profile checks --env-file /dev/null config --format json > $(COMPOSE_CLAIM_TMP)/compose-config.json
+	@cp docker-compose.yml $(COMPOSE_CLAIM_TMP)/docker-compose.yml
+	@cp backend/Dockerfile $(COMPOSE_CLAIM_TMP)/backend/Dockerfile
+	@cp .dockerignore $(COMPOSE_CLAIM_TMP)/.dockerignore
+
+prove-compose-claims: compose-claims-stage ## README §13 compose claims を expand 実測から機械検証 (pinned image 内)
+	@$(DOCKER) run --platform linux/amd64 --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  $(COMPOSE_CLAIM_MOUNTS) $(IMAGE) sh -c \
+	  ".venv/bin/python /app/tests/proofs/phase0_compose_claims_probe.py --repo-root /gate --host-repo-root '$(CURDIR)' --config-json /gate/compose-config.json --output /out/compose-claims.json"
+	@cp $(COMPOSE_CLAIM_TMP)/out/compose-claims.json $(EVIDENCE)/compose-claims.json
+	@echo "claims evidence: $(EVIDENCE)/compose-claims.json"
+
+prove-compose-claims-tamper: compose-claims-stage ## 4 とおり compose defect を claims guard が検出することを実証 (negative gate)
+	@failures=0; for mode in $(COMPOSE_CLAIM_TAMPER_MODES); do \
+	  echo "[compose-claims-tamper] $$mode"; \
+	  $(DOCKER) run --platform linux/amd64 --rm \
+	    --user "$$(id -u):$$(id -g)" -e HOME=/tmp $(COMPOSE_CLAIM_MOUNTS) $(IMAGE) sh -c \
+	    ".venv/bin/python /app/tests/proofs/phase0_compose_claims_probe.py --repo-root /gate --host-repo-root '$(CURDIR)' --config-json /gate/compose-config.json --tamper $$mode --output /out/compose-claims-tamper-$$mode.json" \
+	    || failures=$$((failures + 1)); \
+	done; \
+	if [ $$failures -ne 0 ]; then echo "FAILED: $$failures mode の defect を guard が検出できなかった"; exit 1; fi
+	@cp $(COMPOSE_CLAIM_TMP)/out/compose-claims-tamper-*.json $(EVIDENCE)/
+	@echo "negative gate OK: defect 検出。evidence: $(EVIDENCE)/compose-claims-tamper-*.json"
+
+gate-compose-claims: gate prove-compose-claims prove-compose-claims-tamper ## unit test + compose claims 実測 + tamper を順に実行 (§13 / §15)
 
 # --- §15 network 遮断環境の proof -----------------------------------------------
 # bake とは image build 内の `python -m copilot download-runtime` が download までを
@@ -112,5 +151,5 @@ prove-manifest-digest-tamper: ## manifest の runtime digest 改ざんが stagin
 	if [ $$rc -eq 0 ]; then echo "FAILED: digest 改ざんが staging 照合を通过"; exit 1; fi; \
 	echo "negative gate OK: fetch_runtime_mirror.py は exit $$rc で reject した"; tail -n 3 $(GATE_TMP)/digest-tamper.out
 
-prove-negative-gates: ## 4 本の negative gate を順に実行し docs/evidence へ保存
+prove-negative-gates: ## 5 本の negative gate を順に実行し docs/evidence へ保存
 	@bash tests/proofs/collect_negative_gates.sh $(GATE_TMP) $(GATE_LOG)

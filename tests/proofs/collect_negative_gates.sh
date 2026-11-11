@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 4 本の negative gate を順に実行し、results を markdown evidence へ保存する。
+# 5 本の negative gate を順に実行し、results を markdown evidence へ保存する。
 # 各 gate target は「guard が working tree / manifest / cache を実際に信用していないこと」を
 # fail として signal する設計なので、expected exit code は 0 (guard が defect を検出) である。
 set -u
@@ -11,6 +11,7 @@ gate_targets=(
   prove-manifest-digest-tamper
   prove-offline-negative
   prove-offline-runtime
+  prove-compose-claims-tamper
 )
 
 mkdir -p "$tmp_dir" "$(dirname "$log_path")"
