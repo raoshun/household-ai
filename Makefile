@@ -1,0 +1,190 @@
+# Phase 0 の検証 / 運用コマンド (§15 Phase 0 完了条件の "lint と unit test は Docker
+# 環境内で実行する" に対応)。host へ pip install せず、image 内の .venv を使う。
+COMPOSE ?= docker compose
+DOCKER ?= docker
+IMAGE ?= household-ai-runtime-test:0.1.0
+MIRROR_DIR ?= .local/mirror
+MIRROR_PORT ?= 8099
+MIRROR_BIND ?= 172.17.0.1
+EVIDENCE ?= docs/evidence
+# proof の tool 登録 case: custom (既定, Custom Tool を登録) / none (未登録)。
+# `make proof PROOF_TOOLS=none` で内蔵 tool-only の case を計測する。
+PROOF_TOOLS ?= custom
+
+.PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror
+.PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
+.PHONY: prove-manifest-version-tamper prove-manifest-digest-tamper
+.PHONY: compose-claims-stage prove-compose-claims prove-compose-claims-tamper gate-compose-claims
+.PHONY: prove-live-proof-claims gate-live-proof-claims
+
+help: ## 使い方の一覧
+	@printf '%s\n' "make build | build-offline | up | down | logs | gate | proof | probe | lint | test | fmt"
+	@printf '%s\n' "make verify-pinned | runtime-mirror | runtime-serve (network 制限環境向け)"
+	@printf '%s\n' "make prove-offline | prove-offline-negative | prove-offline-runtime (§15 network 遮断 proof)"
+	@printf '%s\n' "make prove-manifest-version-tamper | prove-manifest-digest-tamper | prove-negative-gates (integrity negative gate)"
+	@printf '%s\n' "make prove-live-proof-claims | gate-live-proof-claims (live proof 2 case gate)"
+
+build: ## Docker image を build する
+	$(COMPOSE) build
+
+verify-pinned: ## pinned manifest と SDK 実測版を host venv で照合 (§15)
+	.venv/bin/python tests/proofs/verify_pinned_manifest.py
+
+runtime-mirror: ## pinned manifest の runtime asset を mirror dir へ staging
+	.venv/bin/python tests/proofs/fetch_runtime_mirror.py --out $(MIRROR_DIR)
+
+runtime-serve: ## staging 済み mirror を docker bridge 向けに serve (build と別 shell)
+	.venv/bin/python -m http.server $(MIRROR_PORT) --bind $(MIRROR_BIND) --directory $(MIRROR_DIR)
+
+build-offline: ## staging 済み mirror 経由で image を build (network 制限環境向け)
+	$(DOCKER) build -f backend/Dockerfile --network=host \
+	  --build-arg COPILOT_CLI_DOWNLOAD_BASE_URL=http://172.17.0.1:$(MIRROR_PORT) -t $(IMAGE) .
+
+up: ## 常駐 container を起動 (gate / proof は profile 分離で起動しない)
+	$(COMPOSE) up -d runtime
+
+down: ## container を停止
+	$(COMPOSE) down
+
+logs: ## runtime container の logs を tail
+	$(COMPOSE) logs -f runtime
+
+gate: ## import 確認 + ruff + unit test を Docker で実行 (既定の検証)
+	$(COMPOSE) --profile checks run --rm gate
+
+proof: ## Custom Tool / permission の live proof を Docker で実行
+	$(COMPOSE) --profile checks run --rm -e HOUSEHOLD_PROOF_TOOLS=$(PROOF_TOOLS) proof
+
+probe: ## pinned SDK の API 面を実測 (pinned image 内で実行)
+	@docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py
+
+# 検証 target は image へ COPY 済みの code ではなく working tree を見る (stale image で
+# gate が通るのを防ぐ)。source だけ read-only で mount し、.venv と data volume は隠さない。
+SRC_MOUNTS = -v $(CURDIR)/backend/app:/app/backend/app:ro -v $(CURDIR)/tests:/app/tests:ro
+
+lint: ## gate の lint 工程だけを実行 (working tree を mount して実行)
+	docker run --rm $(SRC_MOUNTS) $(IMAGE) sh -c "ruff check --config pyproject.toml app ../tests --output-format=concise && ruff format --check --config pyproject.toml app ../tests"
+
+test: ## gate の unit test 工程だけを実行 (working tree を mount して実行)
+	docker run --rm $(SRC_MOUNTS) $(IMAGE) sh -c "python -m pytest -q -p no:cacheprovider --tb=short -rf"
+
+fmt: ## host の git 管理 source を image 内の ruff で format (repo を /mnt/repo へ mount)
+	docker run --rm --user "$$(id -u):$$(id -g)" -e RUFF_CACHE_DIR=/tmp/ruff-cache -v $$PWD:/mnt/repo -w /mnt/repo/backend $(IMAGE) sh -c "ruff format app ../tests"
+
+# --- §13 docker-compose 構成 claims gate ---------------------------------------
+# README §13 が書く compose 設計 (profile 分離 / 1 pinned image / 秘密を bake しない /
+# data volume / host gateway / gate の working tree ro mount / proof state の /tmp) を
+# claim として機械検証する。expand だけ host の docker compose を使い (gate container には
+# docker CLI が無い)、claims 検査の code は pinned image 内で実行する。
+# expand は --env-file /dev/null で host env の影響を排除し、compose 側の既定値だけを検証する。
+COMPOSE_CLAIM_TMP ?= .local/compose-claims
+COMPOSE_CLAIM_MOUNTS = -v $(CURDIR)/$(COMPOSE_CLAIM_TMP):/gate:ro -v $(CURDIR)/tests:/app/tests:ro -v $(CURDIR)/$(COMPOSE_CLAIM_TMP)/out:/out
+COMPOSE_CLAIM_TAMPER_MODES ?= literal-credential bind-data-dir unprofiled-gate baked-secret-in-image
+
+compose-claims-stage: ## claims 検証に必要な compose / Dockerfile / .dockerignore / expand を staging
+	@mkdir -p $(COMPOSE_CLAIM_TMP)/backend $(COMPOSE_CLAIM_TMP)/out $(EVIDENCE)
+	@$(COMPOSE) -f docker-compose.yml --profile checks --env-file /dev/null config --format json > $(COMPOSE_CLAIM_TMP)/compose-config.json
+	@cp docker-compose.yml $(COMPOSE_CLAIM_TMP)/docker-compose.yml
+	@cp backend/Dockerfile $(COMPOSE_CLAIM_TMP)/backend/Dockerfile
+	@cp .dockerignore $(COMPOSE_CLAIM_TMP)/.dockerignore
+
+prove-compose-claims: compose-claims-stage ## README §13 compose claims を expand 実測から機械検証 (pinned image 内)
+	@$(DOCKER) run --platform linux/amd64 --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  $(COMPOSE_CLAIM_MOUNTS) $(IMAGE) sh -c \
+	  ".venv/bin/python /app/tests/proofs/phase0_compose_claims_probe.py --repo-root /gate --host-repo-root '$(CURDIR)' --config-json /gate/compose-config.json --output /out/compose-claims.json"
+	@cp $(COMPOSE_CLAIM_TMP)/out/compose-claims.json $(EVIDENCE)/compose-claims.json
+	@echo "claims evidence: $(EVIDENCE)/compose-claims.json"
+
+prove-compose-claims-tamper: compose-claims-stage ## 4 とおり compose defect を claims guard が検出することを実証 (negative gate)
+	@failures=0; for mode in $(COMPOSE_CLAIM_TAMPER_MODES); do \
+	  echo "[compose-claims-tamper] $$mode"; \
+	  $(DOCKER) run --platform linux/amd64 --rm \
+	    --user "$$(id -u):$$(id -g)" -e HOME=/tmp $(COMPOSE_CLAIM_MOUNTS) $(IMAGE) sh -c \
+	    ".venv/bin/python /app/tests/proofs/phase0_compose_claims_probe.py --repo-root /gate --host-repo-root '$(CURDIR)' --config-json /gate/compose-config.json --tamper $$mode --output /out/compose-claims-tamper-$$mode.json" \
+	    || failures=$$((failures + 1)); \
+	done; \
+	if [ $$failures -ne 0 ]; then echo "FAILED: $$failures mode の defect を guard が検出できなかった"; exit 1; fi
+	@cp $(COMPOSE_CLAIM_TMP)/out/compose-claims-tamper-*.json $(EVIDENCE)/
+	@echo "negative gate OK: defect 検出。evidence: $(EVIDENCE)/compose-claims-tamper-*.json"
+
+gate-compose-claims: gate prove-compose-claims prove-compose-claims-tamper ## unit test + compose claims 実測 + tamper を順に実行 (§13 / §15)
+
+LIVE_PROOF_REGISTERED_LOG ?= .local/proof-case-registered2.log
+LIVE_PROOF_UNREGISTERED_LOG ?= .local/proof-case-unregistered2.log
+LIVE_PROOF_TMP ?= .local/live-proof
+LIVE_PROOF_EVIDENCE ?= docs/evidence/live-proof-two-cases.json
+LIVE_PROOF_SCRIPT := /app/tests/proofs/summarize_live_proof_logs.py
+# 集計と gate 判定は pinned image 内で実行する (§15 再現性)。source と log は ro mount、
+# 書き出しは /out だけ (--user で host uid に合わせて evidence へ保存する)。
+LIVE_PROOF_MOUNTS = -v $(CURDIR)/tests:/app/tests:ro -v $(CURDIR)/$(LIVE_PROOF_TMP)/out:/out
+
+prove-live-proof-claims: ## 2 case live proof log の gate 集計を pinned image 内で実測
+	@test -f $(LIVE_PROOF_REGISTERED_LOG) && test -f $(LIVE_PROOF_UNREGISTERED_LOG)
+	@mkdir -p $(LIVE_PROOF_TMP)/out $(EVIDENCE)
+	@$(DOCKER) run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  $(LIVE_PROOF_MOUNTS) \
+	  -v $(CURDIR)/$(LIVE_PROOF_REGISTERED_LOG):/proof/registered.log:ro \
+	  -v $(CURDIR)/$(LIVE_PROOF_UNREGISTERED_LOG):/proof/unregistered.log:ro \
+	  $(IMAGE) sh -c \
+	  ".venv/bin/python $(LIVE_PROOF_SCRIPT) /proof/registered.log /proof/unregistered.log --gate --output /out/live-proof-two-cases.json --redact-base-url"
+	@cp $(LIVE_PROOF_TMP)/out/live-proof-two-cases.json $(LIVE_PROOF_EVIDENCE)
+	@echo "evidence: $(LIVE_PROOF_EVIDENCE) (集計と gate 判定は pinned image 内)"
+
+gate-live-proof-claims: ## 保存済み evidence JSON の gate を pinned image 内で再検証 (runtime 更新前の値)
+	@test -f $(LIVE_PROOF_EVIDENCE)
+	@$(DOCKER) run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  -v $(CURDIR)/tests:/app/tests:ro \
+	  -v $(CURDIR)/$(LIVE_PROOF_EVIDENCE):/evidence/live-proof-two-cases.json:ro \
+	  $(IMAGE) sh -c \
+	  ".venv/bin/python $(LIVE_PROOF_SCRIPT) --recheck-evidence /evidence/live-proof-two-cases.json"
+	@echo "gate-live-proof-claims OK: evidence の gate 再検証 PASS (runtime 更新前と同じ結果)"
+
+# --- §15 network 遮断環境の proof -----------------------------------------------
+# bake とは image build 内の `python -m copilot download-runtime` が download までを
+# 完了させ、image layer に cache を残すこと (§9 の mirror base URL を使う)。
+# proof 側は network 遮断 container で download 経路を再実行し、cache 再利用だけを観測する。
+
+prove-offline: ## network 遮断 container で bake 済み runtime の cache hit を実証
+	@mkdir -p $(EVIDENCE)
+	$(DOCKER) run --rm --network none $(IMAGE) \
+	  python /app/tests/proofs/offline_runtime_cache_proof.py --mode cache-hit \
+	  > $(EVIDENCE)/offline-cache-hit.json
+	@echo "evidence: $(EVIDENCE)/offline-cache-hit.json"
+
+prove-offline-negative: ## network 遮断で force download が失敗することを実証 (negative gate)
+	@mkdir -p $(EVIDENCE)
+	$(DOCKER) run --rm --network none $(IMAGE) \
+	  python /app/tests/proofs/offline_runtime_cache_proof.py --mode force-download-failure \
+	  > $(EVIDENCE)/offline-force-download-failure.json
+	@echo "evidence: $(EVIDENCE)/offline-force-download-failure.json"
+
+prove-offline-runtime: ## network 遮断 container で runtime 起動と Custom Tool 登録を実証
+	@mkdir -p .local/evidence $(EVIDENCE) && chmod 0777 .local/evidence
+	$(DOCKER) run --rm --network none -v $$PWD/.local/evidence:/tmp/evidence $(IMAGE) \
+	  python /app/tests/proofs/phase0_offline_runtime_proof.py \
+	  --out /tmp/evidence/offline-runtime-proof.json
+	@cp .local/evidence/offline-runtime-proof.json $(EVIDENCE)/offline-runtime-proof.json
+	@echo "evidence: $(EVIDENCE)/offline-runtime-proof.json"
+
+# pinned manifest を script 側が信用しているかを問う negative gate。manifest の写しを
+# 改ざんして実行し、guard が reject すること (exit code != 0) を期待値とする。
+# 通過した場合は target 自身が exit 1 して fail する。
+GATE_TMP ?= .local/negative-gates
+GATE_LOG ?= docs/evidence/negative-gates.md
+
+prove-manifest-version-tamper: ## manifest の SDK 版改ざんが integrity check で failure になることを実証
+	@mkdir -p $(GATE_TMP)
+	@.venv/bin/python -c "import json,pathlib;p=pathlib.Path('$(GATE_TMP)/manifest-version-tamper.json');d=json.load(open('docs/pinned-runtime-versions.json'));d['sdk_version']='9.9.9';p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
+	@COPILOT_SDK_PKG=github-copilot .venv/bin/python tests/proofs/verify_pinned_manifest.py --manifest $(GATE_TMP)/manifest-version-tamper.json >$(GATE_TMP)/version-tamper.out 2>&1; rc=$$?; \
+	if [ $$rc -eq 0 ]; then echo "FAILED: 改ざん manifest が integrity check を通过"; exit 1; fi; \
+	echo "negative gate OK: verify_pinned_manifest.py は exit $$rc で reject した"; tail -n 3 $(GATE_TMP)/version-tamper.out
+
+prove-manifest-digest-tamper: ## manifest の runtime digest 改ざんが staging 照合で failure になることを実証
+	@mkdir -p $(GATE_TMP)/mirror
+	@.venv/bin/python -c "import json,pathlib,shutil;src=pathlib.Path('docs/pinned-runtime-versions.json');d=json.loads(src.read_text(encoding='utf-8'));tag=d['download']['tag'];dst=pathlib.Path('$(GATE_TMP)/mirror');dst.mkdir(parents=True,exist_ok=True);shutil.copytree(pathlib.Path('$(MIRROR_DIR)')/tag,dst/tag,dirs_exist_ok=True);d['runtime_platforms'][d['runtime_platform']]='0'*64;pathlib.Path('$(GATE_TMP)/manifest-digest-tamper.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
+	@.venv/bin/python tests/proofs/fetch_runtime_mirror.py --manifest $(GATE_TMP)/manifest-digest-tamper.json --out $(GATE_TMP)/mirror >$(GATE_TMP)/digest-tamper.out 2>&1; rc=$$?; \
+	if [ $$rc -eq 0 ]; then echo "FAILED: digest 改ざんが staging 照合を通过"; exit 1; fi; \
+	echo "negative gate OK: fetch_runtime_mirror.py は exit $$rc で reject した"; tail -n 3 $(GATE_TMP)/digest-tamper.out
+
+prove-negative-gates: ## 5 本の negative gate を順に実行し docs/evidence へ保存
+	@bash tests/proofs/collect_negative_gates.sh $(GATE_TMP) $(GATE_LOG)

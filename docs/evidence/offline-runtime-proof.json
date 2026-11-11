@@ -1,0 +1,28 @@
+{
+  "case": "runtime-network-none",
+  "network_reachable": false,
+  "network_detail": "172.17.0.1:8098 unreachable (OSError)",
+  "provider": "ollama",
+  "model": null,
+  "provider_settings": {
+    "enable_skills": true,
+    "session_store_enabled": false,
+    "turn_timeout_seconds": 180
+  },
+  "runtime_started": true,
+  "health_ready": true,
+  "health_detail": "",
+  "list_models_count": 0,
+  "session_id": "d67c9230-174a-4d74-a59d-695fa1a765be",
+  "snapshot_tool_names": [
+    "ofc_home_route_probe"
+  ],
+  "tool_registered": true,
+  "turn_aborted": true,
+  "turn_tool_calls": [],
+  "turn_text": "",
+  "turn_events": 1,
+  "handler_calls": [],
+  "session_closed": true,
+  "runtime_stopped": true
+}

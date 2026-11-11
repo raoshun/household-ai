@@ -1,0 +1,10 @@
+{
+  "mode": "cache-hit",
+  "network_probe": "172.17.0.1:8098 unreachable (OSError)",
+  "download_exit_code": 0,
+  "cache_hit_lines": [
+    "Runtime cached at: /tmp/xdg-cache/github-copilot-sdk/cli/1.0.107/prebuilds/linux-x64/copilot",
+    "Runtime library cached at: /tmp/xdg-cache/github-copilot-sdk/cli/1.0.107/prebuilds/linux-x64/runtime.node"
+  ],
+  "cache_home": "/tmp/xdg-cache"
+}

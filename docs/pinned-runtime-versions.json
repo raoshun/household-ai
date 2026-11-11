@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "purpose": "pinned Copilot SDK / CLI runtime 版と release asset digest の manifest",
+  "generated_at": "2026-11-11",
+  "sdk_version": "1.0.29",
+  "cli_version": "1.0.107",
+  "runtime_platform": "linux-x64",
+  "runtime_platform_note": "home PC (Ubuntu 24.04 x86_64 glibc) build host 向け target",
+  "verification_status": "cli_version は pinned SDK 1.0.29 の probe 実測値 (runtime_cli_ver). digest は release v1.0.107 の SHA256SUMS.txt から取得",
+  "sources": {
+    "sdk_version": "backend/pyproject.toml [sdk] github-copilot-sdk==1.0.29",
+    "cli_version": "container probe docs/evidence/sdk_api_probe_pinned_1.0.29.json → runtime_cli.cli_version (= copilot._cli_version.CLI_VERSION)",
+    "digests": "https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt",
+    "probe": ".venv/bin/python tests/proofs/sdk_api_probe.py"
+  },
+  "download": {
+    "release_repo": "github/copilot-cli",
+    "tag": "v1.0.107",
+    "checksums_url": "https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt",
+    "default_base_url": "https://github.com/github/copilot-cli/releases/download",
+    "release_path": "v1.0.107/SHA256SUMS.txt",
+    "downloads_checksums_first": true,
+    "base_url_override_env": "COPILOT_CLI_DOWNLOAD_BASE_URL",
+    "asset_name_pattern": "github-copilot-1.0.107-<runtime_platform>.tgz",
+    "fallback": "hostless asset が 404 の場合のみ SEA 版 copilot-1.0.107-<target>.tar.gz"
+  },
+  "runtime_platforms": {
+    "linux-x64": "a1e3acdb98106350bb0c360e2e18d9fbf549cea0b321be50af51394b3efaf057",
+    "linux-arm64": "0d2e6035b9d96c847da3d377fc70a7c80d31e91f2a4cd688944ffba3de733036",
+    "linuxmusl-x64": "d2bcd0f4dafd440d0d109ea50f824352a68cf538812c8b6e598418f1cd326564",
+    "linuxmusl-arm64": "6dd6376b8bde36b8551bbb8a1c385f141cee37ed3e36aa86d2683f78a21e2f69",
+    "darwin-arm64": "ccf9e39c4338c737a529acad689953a8a422ac85dab06563217c2bd8b5bfb9e7",
+    "darwin-x64": "ef6f9204edb5e2a6728d70d8ed31c9a71bdaeb1a2c3e0dba363ac38ce8eb3a1d",
+    "win32-x64": "4c257362d2b2a385c6a639b5de028524e2498ce677577afc704d4bcb5db4ca5d",
+    "win32-arm64": "ee2264d9f4c9d2aa94330479f0aeac89f48efb0ab1d8dc30747fba25c7bbc2b2"
+  },
+  "sea_fallback_digests": {
+    "copilot-darwin-arm64.tar.gz": "85c58e1ba11a5869c9f5f59017571674ef6199e474c118caad3cb23ebe99448a",
+    "copilot-darwin-x64.tar.gz": "f9106a04e0134d2593fa664bb3bcaa282e308cc740c79182f6c3ae53fffe4caf",
+    "copilot-linux-arm64.tar.gz": "28c9c911af64521821ba908dc1866bf4bfd1705cd9b3320abc2353704de952a0",
+    "copilot-linux-x64.tar.gz": "aff04181566f637010a88e68ea145ac1515ec596fae3890d06d81bb8c4be0c4e",
+    "copilot-linuxmusl-arm64.tar.gz": "d424fabc61afec4f6361f0eb6ccc4cd8e69a132650c77e307cb4c7a31aee065c",
+    "copilot-linuxmusl-x64.tar.gz": "bd962a583fd52767c631f8aadd5fd0e4f8e3e94bfac0f094b673b540170e9ba9",
+    "copilot-win32-arm64.zip": "fb9262b1697878d82fc715b68c88eb946368e46fa4dd89f8857dd04aa5079151",
+    "copilot-win32-x64.zip": "3056ce3acea5baeed0b61680df5296801dcd6d5e819dfe6ebdbd0ed385264430"
+  },
+  "cache_layout": {
+    "version_dir_env": "COPILOT_CLI_EXTRACT_DIR",
+    "version_dir_default_order": [
+      "COPILOT_CLI_EXTRACT_DIR",
+      "XDG_CACHE_HOME",
+      "~/.cache"
+    ],
+    "observed_layout": "github-copilot-sdk/cli/1.0.107/prebuilds/<platform>/{copilot-runtime,runtime.node,<marker>}",
+    "bundle_complete_marker": ".hostless-runtime-assets-v2",
+    "compat_alias": "copilot (download_cli() が ensure_runtime_wrapper() で生成)",
+    "runtime_library": "copilot-runtime",
+    "download_runtime_cli_flags": [
+      "--force",
+      "--version <ver>",
+      "--in-process"
+    ],
+    "skip_env": [
+      "COPILOT_SKIP_CLI_DOWNLOAD",
+      "COPILOT_CLI_PATH"
+    ]
+  },
+  "measured_digest_algorithms": [
+    "sha256"
+  ],
+  "verification": {
+    "build_gate": "backend/Dockerfile build で python /app/tests/proofs/verify_pinned_manifest.py を実行 (make verify-pinned でも確認可)",
+    "live_proof": "make proof (docker compose run --rm proof python /app/tests/proofs/phase0_live_proof.py)",
+    "offline_runtime_proof": "make prove-offline (network 遮断 container で download 経路再実行 -> cache hit) / make prove-offline-negative (network 遮断で force download が失敗) / make prove-offline-runtime (network 遮断 container で runtime 起動と Custom Tool 登録)",
+    "mirror_build": "make runtime-mirror && make build-offline (COPILOT_CLI_DOWNLOAD_BASE_URL=http://172.17.0.1:<port>)",
+    "negative_gates": "make prove-manifest-version-tamper / prove-manifest-digest-tamper / prove-offline-negative / prove-offline-runtime の 4 gate。実行ログは docs/evidence/negative-gates.md (manifest 版・digest 改ざんは integrity / staging 照合で failure)"
+  },
+  "release_asset_names": {
+    "linux-x64": "github-copilot-1.0.107-linux-x64.tgz",
+    "linux-arm64": "github-copilot-1.0.107-linux-arm64.tgz",
+    "linuxmusl-x64": "github-copilot-1.0.107-linuxmusl-x64.tgz",
+    "linuxmusl-arm64": "github-copilot-1.0.107-linuxmusl-arm64.tgz",
+    "darwin-arm64": "github-copilot-1.0.107-darwin-arm64.tgz",
+    "darwin-x64": "github-copilot-1.0.107-darwin-x64.tgz",
+    "win32-x64": "github-copilot-1.0.107-win32-x64.tgz",
+    "win32-arm64": "github-copilot-1.0.107-win32-arm64.tgz"
+  },
+  "baked_image_cache": {
+    "path": "/tmp/xdg-cache/github-copilot-sdk/cli/1.0.107/prebuilds/linux-x64",
+    "bake_env": "backend/Dockerfile: XDG_CACHE_HOME=/tmp/xdg-cache + COPILOT_CLI_DOWNLOAD_BASE_URL (ARG, default GitHub release URL)",
+    "bake_cmd": "python -m copilot download-runtime (verify_pinned_manifest.py 後に実行)",
+    "size": "165 MB",
+    "entries": [
+      "animations",
+      "builtin",
+      "builtin-skills",
+      "copilot-runtime",
+      "definitions",
+      "plugins",
+      "restart-supervisor.js",
+      "ripgrep",
+      "runtime.node",
+      "schemas",
+      "tgrep"
+    ],
+    "marker": ".hostless-runtime-assets-v2",
+    "copilot_runtime_sha256": "1d809dd4789dab2305bcd7bb9a6d5057ccf5cfca86705b463d374982c0415e42",
+    "copilot_runtime_sha512": "abfcdbfb1b5e8f7119e888f87f3e9caa6b6cbd63889394db456f09133e765ab927e099eef46d51cd4479cc1a29ef6f3cb13deebd9c03814e577888ff86acf70d",
+    "measured_by": "docker run --rm --network none household-ai-runtime-test:0.1.0 sha512sum / sha256sum (extract 済み file の digest. release asset tgz の digest とは別 object)"
+  }
+}

@@ -1,0 +1,47 @@
+[project]
+name = "household-ai-backend"
+version = "0.1.0"
+description = "家庭内ルール管理・判断支援AIチャットアプリ バックエンド"
+requires-python = ">=3.12,<3.13"
+# 仕様書 §18.6 「SDKのバージョンを固定する」に従い、全依存を厳密固定する。
+# 解決は uv 0.13.0 / Python 3.12.15 (linux x86_64) で実施した。
+dependencies = [
+    "github-copilot-sdk==1.0.29",
+    "fastapi==0.162.1",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.3",
+    "python-dotenv==1.2.4",
+    "httpx==0.28.1",
+    "pyyaml==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "ruff==0.17.4",
+]
+
+[build-system]
+requires = ["setuptools==75.6.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C901", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # 日本語コメント中の全角記号
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.pytest.ini_options]
+# 実行は backend/ 上で（このファイルが rootdir の設定になり ../tests を拾う）
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["../tests"]

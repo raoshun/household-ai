@@ -1,0 +1,188 @@
+{
+  "gate": "compose-claims",
+  "config_source": "docker compose config --format json",
+  "claims": [
+    {
+      "claim": "phase0_compose_service_set",
+      "measured": "services=[\"gate\", \"proof\", \"runtime\"] default_up=[\"runtime\"] profiles={\"gate\": [\"checks\"], \"proof\": [\"checks\"], \"runtime\": []}"
+    },
+    {
+      "claim": "single_pinned_image",
+      "measured": "{\"gate\": \"household-ai-runtime-test:0.1.0\", \"proof\": \"household-ai-runtime-test:0.1.0\", \"runtime\": \"household-ai-runtime-test:0.1.0\"}"
+    },
+    {
+      "claim": "credentials_not_baked",
+      "measured": "compose literals=[] expanded={\"gate\": {\"AI_API_KEY\": {\"present\": false, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"proof\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"runtime\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}}"
+    },
+    {
+      "claim": "data_volume_mount",
+      "measured": "named_volumes=[\"household-data\"] runtime=[\"household-data:/app/data:rw\"]"
+    },
+    {
+      "claim": "host_ollama_gateway",
+      "measured": "{\"gate\": [], \"proof\": [\"host.docker.internal=host-gateway\"], \"runtime\": [\"host.docker.internal=host-gateway\"]}"
+    },
+    {
+      "claim": "gate_uses_working_tree_ro",
+      "measured": "[\"<repo>/backend/app:/app/backend/app:ro\", \"<repo>/tests:/app/tests:ro\"]"
+    },
+    {
+      "claim": "proof_state_in_container_tmp",
+      "measured": "state={\"COPILOT_RUNTIME_DIR\": \"/tmp/proof-runtime\", \"DATA_DIR\": \"/tmp/proof-data\"} proof_volumes=[]"
+    },
+    {
+      "claim": "secrets_and_data_excluded_from_image",
+      "measured": "excluded=[\"*.py[oc]\", \"*.zcode.*\", \".env\", \".env.*\", \".git\", \".github\", \".pytest_cache/\", \".ruff_cache/\", \".spike/\", \".venv*/\", \".venv/\", \"__pycache__/\", \"copilot-runtime/\", \"data/\", \"frontmatter.json\", \"installed-plugins/\", \"logs/\", \"session-state/\"] copy_sources=[\"./\", \"./README.md\", \"./app\", \"/app/docs/pinned-runtime-versions.json\", \"/app/skills\", \"/app/tests\", \"backend/README.md\", \"backend/app\", \"backend/pyproject.toml\", \"backend/uv.lock\", \"docs/pinned-runtime-versions.json\", \"skills\", \"tests\"]"
+    }
+  ],
+  "measured": {
+    "services": [
+      "gate",
+      "proof",
+      "runtime"
+    ],
+    "default_up_services": [
+      "runtime"
+    ],
+    "profiled_services": {
+      "gate": [
+        "checks"
+      ],
+      "proof": [
+        "checks"
+      ],
+      "runtime": []
+    },
+    "service_images": {
+      "gate": "household-ai-runtime-test:0.1.0",
+      "proof": "household-ai-runtime-test:0.1.0",
+      "runtime": "household-ai-runtime-test:0.1.0"
+    },
+    "service_volumes": {
+      "gate": [
+        "<repo>/backend/app:/app/backend/app:ro",
+        "<repo>/tests:/app/tests:ro"
+      ],
+      "proof": [],
+      "runtime": [
+        "household-data:/app/data:rw"
+      ]
+    },
+    "named_volumes": [
+      "household-data"
+    ],
+    "named_volume_mounts": [
+      "household-data:/app/data"
+    ],
+    "extra_hosts": {
+      "gate": [],
+      "proof": [
+        "host.docker.internal=host-gateway"
+      ],
+      "runtime": [
+        "host.docker.internal=host-gateway"
+      ]
+    },
+    "credential_env": {
+      "gate": {
+        "AI_API_KEY": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "COPILOT_GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GH_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        }
+      },
+      "proof": {
+        "AI_API_KEY": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "COPILOT_GITHUB_TOKEN": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "GH_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        }
+      },
+      "runtime": {
+        "AI_API_KEY": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "COPILOT_GITHUB_TOKEN": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "GH_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        }
+      }
+    },
+    "proof_state_dirs": {
+      "COPILOT_RUNTIME_DIR": "/tmp/proof-runtime",
+      "DATA_DIR": "/tmp/proof-data"
+    },
+    "runtime_dir_env": {
+      "proof": "/tmp/proof-runtime"
+    },
+    "gate_python_path": "",
+    "compose_credential_literals": [],
+    "dockerfile_copy_sources": [
+      "./",
+      "./README.md",
+      "./app",
+      "/app/docs/pinned-runtime-versions.json",
+      "/app/skills",
+      "/app/tests",
+      "backend/README.md",
+      "backend/app",
+      "backend/pyproject.toml",
+      "backend/uv.lock",
+      "docs/pinned-runtime-versions.json",
+      "skills",
+      "tests"
+    ],
+    "dockerignore_excluded": [
+      "*.py[oc]",
+      "*.zcode.*",
+      ".env",
+      ".env.*",
+      ".git",
+      ".github",
+      ".pytest_cache/",
+      ".ruff_cache/",
+      ".spike/",
+      ".venv*/",
+      ".venv/",
+      "__pycache__/",
+      "copilot-runtime/",
+      "data/",
+      "frontmatter.json",
+      "installed-plugins/",
+      "logs/",
+      "session-state/"
+    ]
+  },
+  "host_path_redaction": "host repo root 前方は <repo> へ mask 済み (--host-repo-root)"
+}
