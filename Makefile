@@ -6,12 +6,17 @@ IMAGE ?= household-ai-runtime-test:0.1.0
 MIRROR_DIR ?= .local/mirror
 MIRROR_PORT ?= 8099
 MIRROR_BIND ?= 172.17.0.1
+EVIDENCE ?= docs/evidence
 
-.PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror runtime-serve verify-pinned
+.PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror
+.PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
+.PHONY: prove-manifest-version-tamper prove-manifest-digest-tamper
 
 help: ## 使い方の一覧
 	@printf '%s\n' "make build | build-offline | up | down | logs | gate | proof | probe | lint | test | fmt"
 	@printf '%s\n' "make verify-pinned | runtime-mirror | runtime-serve (network 制限環境向け)"
+	@printf '%s\n' "make prove-offline | prove-offline-negative | prove-offline-runtime (§15 network 遮断 proof)"
+	@printf '%s\n' "make prove-manifest-version-tamper | prove-manifest-digest-tamper | prove-negative-gates (integrity negative gate)"
 
 build: ## Docker image を build する
 	$(COMPOSE) build
@@ -47,11 +52,60 @@ proof: ## Custom Tool / permission の live proof を Docker で実行
 probe: ## pinned SDK の API 面を実測 (pinned image 内で実行)
 	@docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py
 
-lint: ## gate の lint 工程だけを実行
-	docker run --rm $(IMAGE) sh -c "ruff check --config pyproject.toml app ../tests --output-format=concise && ruff format --check --config pyproject.toml app ../tests"
+# 検証 target は image へ COPY 済みの code ではなく working tree を見る (stale image で
+# gate が通るのを防ぐ)。source だけ read-only で mount し、.venv と data volume は隠さない。
+SRC_MOUNTS = -v $(CURDIR)/backend/app:/app/backend/app:ro -v $(CURDIR)/tests:/app/tests:ro
 
-test: ## gate の unit test 工程だけを実行
-	docker run --rm $(IMAGE) sh -c "python -m pytest -q -p no:cacheprovider --tb=short -rf"
+lint: ## gate の lint 工程だけを実行 (working tree を mount して実行)
+	docker run --rm $(SRC_MOUNTS) $(IMAGE) sh -c "ruff check --config pyproject.toml app ../tests --output-format=concise && ruff format --check --config pyproject.toml app ../tests"
+
+test: ## gate の unit test 工程だけを実行 (working tree を mount して実行)
+	docker run --rm $(SRC_MOUNTS) $(IMAGE) sh -c "python -m pytest -q -p no:cacheprovider --tb=short -rf"
 
 fmt: ## host の git 管理 source を image 内の ruff で format (repo を /mnt/repo へ mount)
 	docker run --rm -e RUFF_CACHE_DIR=/tmp/ruff-cache -v $$PWD:/mnt/repo -w /mnt/repo/backend $(IMAGE) sh -c "ruff format app ../tests"
+
+# --- §15 network 遮断環境の proof -----------------------------------------------
+# bake とは image build 内の `python -m copilot download-runtime` が download までを
+# 完了させ、image layer に cache を残すこと (§9 の mirror base URL を使う)。
+# proof 側は network 遮断 container で download 経路を再実行し、cache 再利用だけを観測する。
+
+prove-offline: ## network 遮断 container で bake 済み runtime の cache hit を実証
+	@mkdir -p $(EVIDENCE)
+	$(DOCKER) run --rm --network none $(IMAGE) \
+	  python /app/tests/proofs/offline_runtime_cache_proof.py --mode cache-hit \
+	  > $(EVIDENCE)/offline-cache-hit.json
+	@echo "evidence: $(EVIDENCE)/offline-cache-hit.json"
+
+prove-offline-negative: ## network 遮断で force download が失敗することを実証 (negative gate)
+	@mkdir -p $(EVIDENCE)
+	$(DOCKER) run --rm --network none $(IMAGE) \
+	  python /app/tests/proofs/offline_runtime_cache_proof.py --mode force-download-failure \
+	  > $(EVIDENCE)/offline-force-download-failure.json
+	@echo "evidence: $(EVIDENCE)/offline-force-download-failure.json"
+
+prove-offline-runtime: ## network 遮断 container で runtime 起動と Custom Tool 登録を実証
+	@mkdir -p .local/evidence $(EVIDENCE) && chmod 0777 .local/evidence
+	$(DOCKER) run --rm --network none -v $$PWD/.local/evidence:/tmp/evidence $(IMAGE) \
+	  python /app/tests/proofs/phase0_offline_runtime_proof.py \
+	  --out /tmp/evidence/offline-runtime-proof.json
+	@cp .local/evidence/offline-runtime-proof.json $(EVIDENCE)/offline-runtime-proof.json
+	@echo "evidence: $(EVIDENCE)/offline-runtime-proof.json"
+
+# pinned manifest を script 側が信用しているかを問う negative gate。manifest の写しを
+# 改ざんして実行し、failure になることを shell の反転で確認する (通れば gate 失敗)。
+GATE_TMP ?= .local/negative-gates
+
+prove-manifest-version-tamper: ## manifest の SDK 版改ざんが integrity check で failure になることを実証
+	@mkdir -p $(GATE_TMP)
+	@.venv/bin/python -c "import json,pathlib;p=pathlib.Path('$(GATE_TMP)/manifest-version-tamper.json');d=json.load(open('docs/pinned-runtime-versions.json'));d['sdk_version']='9.9.9';p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
+	@if COPILOT_SDK_PKG=github-copilot .venv/bin/python tests/proofs/verify_pinned_manifest.py --manifest $(GATE_TMP)/manifest-version-tamper.json >/dev/null 2>&1; then echo "FAILED: 改ざん manifest が integrity check を通过"; exit 1; fi
+	@echo "negative gate OK: manifest 版改ざんは failure になった"
+
+prove-manifest-digest-tamper: ## manifest の runtime digest 改ざんが staging 照合で failure になることを実証
+	@mkdir -p $(GATE_TMP)/mirror
+	@.venv/bin/python -c "import json,pathlib,shutil;src=pathlib.Path('docs/pinned-runtime-versions.json');d=json.loads(src.read_text(encoding='utf-8'));tag=d['download']['tag'];dst=pathlib.Path('$(GATE_TMP)/mirror');dst.mkdir(parents=True,exist_ok=True);shutil.copytree(pathlib.Path('$(MIRROR_DIR)')/tag,dst/tag,dirs_exist_ok=True);d['runtime_platforms'][d['runtime_platform']]='0'*64;pathlib.Path('$(GATE_TMP)/manifest-digest-tamper.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
+	@if .venv/bin/python tests/proofs/fetch_runtime_mirror.py --manifest $(GATE_TMP)/manifest-digest-tamper.json --out $(GATE_TMP)/mirror >/dev/null 2>&1; then echo "FAILED: digest 改ざんが staging 照合を通过"; exit 1; fi
+	@echo "negative gate OK: digest 改ざんは failure になった (staging 照合)"
+
+prove-negative-gates: prove-manifest-version-tamper prove-manifest-digest-tamper prove-offline-negative prove-offline-runtime ## 4 negative gate を順に実行

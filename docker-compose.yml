@@ -49,6 +49,11 @@ services:
     image: household-ai-runtime-test:0.1.0
     # backend/pyproject.toml が pytest 設定 (testpaths / pythonpath / asyncio_mode) を
     # 持つため、rootdir が backend/ になるよう workdir で引数なし実行する。
+    # gate は image 内 COPY ではなく working tree の code を検証する (stale image 回避)。
+    # .venv (/app/.venv) と data volume を隠さないよう source dir だけを read-only mount する。
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./tests:/app/tests:ro
     command:
       - sh
       - -c
