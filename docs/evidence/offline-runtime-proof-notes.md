@@ -190,3 +190,84 @@ evidence file を読む test は置かない)。
 - expand は `--env-file /dev/null` なので、展開値は compose file の既定値 / placeholder
   (`AI_API_KEY: "local-dummy"`, `COPILOT_GITHUB_TOKEN: ""`) であり、host の実 env を反映しない。
 - §4 の live proof 同様、built-in tool への deny 応答は実測未取得 (unit test 検証)。
+
+## 7. live proof claims gate (2 case の tool 登録境界)
+
+§4 の 2 case log から「session へ登録した name だけ Custom Tool として実行
+できる」境界を機械検査する gate。gate 名は `live-proof-two-cases`
+(schema_version 1)。
+
+### 7.1 集計 target と evidence の保存 (実測)
+
+```bash
+make prove-live-proof-claims   # 実 log から gate を実行し evidence を生成
+make gate-live-proof-claims    # 保存済み evidence を --recheck-evidence で再検証
+```
+
+- 集計器は [tests/proofs/summarize_live_proof_logs.py](../../tests/proofs/
+  summarize_live_proof_logs.py) で、pinned image 内で実行する
+- 入力 log は host の git 管理外 (`.local/proof-case-registered2.log`,
+  `.local/proof-case-unregistered2.log`) を read-only mount する。log には host
+  の endpoint URL と model 名が残るため commit しない
+- container uid 10001 は host mount へ書けないため、evidence は container の
+  `/out` へ書き、host 側で `docs/evidence/live-proof-two-cases.json` へ copy した
+- `--redact-base-url` を使い、evidence の `base_url` は `"<redacted>"`
+- 実測: gate checks 22 / failures 0 / `gate_result` PASS、target の exit code 0。
+  内訳は registered (`custom`) 11、unregistered (`none`) 10、
+  `tool_cases_distinct` 1
+
+### 7.2 gate が要求する evidence
+
+registered case (tool_case `custom`): execution start / complete 1 件以上、
+handler call 1 件以上、outcome success 1 件以上、session tool 登録 name 一致、
+session tools 数と `registered_custom_tools` の一致、permission request /
+response 1 組、built-in 名 tool 呼び 0 件、shell tool (bash / write_agent /
+read_bash / stop_bash / list_bash) の 3 件以上が disabled tools に含まれること、
+`registered_custom_tools` を session tool 登録 flag として扱う。
+
+unregistered case (tool_case `none`): handler call 0 件、execution / outcome
+success / permission pair なし、tool 未登録、session tools 0、shell tools 0 件、
+同名 tool 呼び 0 件。
+
+`tool_cases_distinct`: 2 case の tool_case が `custom` と `none` で異なること
+(label は `registered+unregistered/custom+none tool_cases_distinct`)。
+
+### 7.3 gate test による改ざん検出 (unit test)
+
+[test_live_proof_summary.py](../../tests/unit/test_live_proof_summary.py) は実
+log ではなく、集計器が読む行 form を写した synthetic fixture を使う (実 log
+そのものではなく、log form を写した合成 data である)。収集 test 数は 29。
+
+gate を通した fixture pair を 1 項目だけ改ざんしたときの failure label (実測、
+いずれも failure 1 件):
+
+| 改ざん | 検出 label |
+| :--- | :--- |
+| registered handler call 0 | `registered/custom handler_executed` |
+| registered execution 0/0 | `registered/custom execution_start_and_complete` |
+| registered outcome success 0 | `registered/custom custom_tool_outcome_success` |
+| registered permission pair 0 | `registered/custom permission_pair_observed` |
+| registered disabled tool list 空 | `registered/custom shell_tools_disabled` |
+| registered case の session tool 名 空 | `registered/custom tool_registration_count_matches_session_tools` |
+| unregistered handler call 1 | `unregistered/none handler_not_executed` |
+| unregistered outcome success あり | `unregistered/none custom_tool_outcome_failure` |
+| unregistered permission pair 1 | `unregistered/none permission_pair_absent` |
+| registered `registered_custom_tools` を 0 に | flag check と一致 check の 2 件 |
+| unregistered `registered_custom_tools` を 1 に | `unregistered/none custom_tool_not_registered` |
+| 1 case の tool_case を入れ替え | `tool_cases_distinct` と入れ替え後の branch の要求 evidence |
+| case を 1 件だけ渡す | `tool_cases_distinct` のみ (exit 1) |
+
+session tools と tool 登録 flag の不整合は derived copy だけでなく case 側の
+値も書き換えて検査する (`tool_registration_count_matches_session_tools`)。
+`--recheck-evidence` は正常 evidence で 22 / 0 / PASS、改ざん evidence では
+exit 1 と failures 1 件を返す。evidence 往復で turn 数と tool 名が保存される
+ことも test している。
+
+### 7.4 gate の適用範囲
+
+- gate は log に残った evidence の一致を検査する。runtime の実装を保証する
+  ものではなく、log が書けたことと実行の正しさは別の話である
+- permission の deny 応答 (§4.4) は unit test 側でのみ検査しており、実 log では
+  測っていない
+- `--gate` を使わない集計実行は FAIL でも exit 0 で JSON を print する。検証に
+  使うなら `--gate` か `--recheck-evidence` を使う
