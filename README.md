@@ -1132,6 +1132,8 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 | offline cache / runtime | `make prove-offline` | `offline-runtime-proof.json` ほか 2 件 |
 | negative gate (guard が defect を検出) | `make prove-negative-gates` | `negative-gates.md` |
 | compose 構成 claims (8 claims) | `make gate-compose-claims` | `compose-claims.json`, `compose-claims-tamper-*.json` |
+| live proof 2 case claims (22 checks) | `make prove-live-proof-claims` | `live-proof-two-cases.json` を container `/out` 経由で evidence へ |
+| live proof claims gate 再検証 | `make gate-live-proof-claims` | `live-proof-two-cases.json` + `test_live_proof_summary.py` (29 tests) |
 
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
 Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを

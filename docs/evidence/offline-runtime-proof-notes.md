@@ -65,54 +65,87 @@ make prove-offline-runtime MIRROR_PORT=8099 (network none proof)   # --network n
 
 ## 4. Custom Tool 実行 (LAN の model を使った live proof)
 
-`make proof` (case 選択は `HOUSEHOLD_TOOL_POLICY=registered|disabled`) の実行は
+`make proof` (= `docker compose --profile checks run --rm proof`) の実行は
 `tests/proofs/phase0_live_proof.py`. 実行には model が必要で、LAN の Ollama
 (`OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`) を使う。生ログはリダイレクト先
 (例 `.local/proof-<policy>.log`) に置き git にコミットしない (session id / provider log を含む)。
 
-実測 (pinned SDK 1.0.29 / CLI 1.0.107 / model `gemma4:e2b`):
+env `HOUSEHOLD_TOOL_POLICY` は tool の登録可否を切り替えない: proof script の `tools=` 指定は
+`build_declaration()` 1 か所だけで、`HOUSEHOLD_TOOL_POLICY=disabled` を渡して再走した log でも
+Custom Tool は登録され turn 1 で実行された (`tool_calls=['household_list_housework']`、
+`RESULT [disabled] ok=True`)。この env 変数は log に出す tag の label だけを変える (2026-11-11 に
+script と実行 log 両側で確認)。旧 §4 の表がうたっていた「Custom Tool 宣言なし (内蔵 tool のみ)」
+case はこの env では再現できない。登録の有無を実際に切り替えるのは別の env
+`HOUSEHOLD_PROOF_TOOLS` (`custom` 既定 / `none`) で、`make proof PROOF_TOOLS=none` が
+`tools=[]` (Custom Tool 0 件) で proof を走らせる。registered 名 policy と wildcard switch の挙動は
+unit test (`tests/unit/test_provider.py` の `test_open_registered_policy_は_wildcardを含まない` /
+`test_open_tools無しは_wildcardへfallback` / `test_open_wildcard_switch`) 側で検証する。
 
-| case | turn 1 | turn 2 (内蔵 tool 試み) |
+env 名が実際に効く場所は proof script ではなく runtime 側である: `provider.py` の
+`_policy_wildcard_enabled()` は `HOUSEHOLD_TOOL_POLICY` を読み、値が `wildcard` のときだけ
+allow-list を `custom:*` へ戻す (既定は registered 名による deny-by-default)。認められている値は
+`registered` (既定) と `wildcard` だけで `registered|disabled|both` という switch は存在しない
+(unit test `tests/unit/test_provider.py` の `test_open_tools無しは_wildcardへfallback` と
+`test_open_wildcard_switch` がこの 2 経路だけを確かめている)。
+
+### HEAD での実測 (tool 登録あり / なしの 2 case)
+
+HEAD `68ac63a` を `make build` した image (pinned SDK 1.0.29 / CLI 1.0.107) で model
+`gemma4:e2b` を使い、`make proof` (tool 登録あり) と `make proof PROOF_TOOLS=none` (登録なし) を
+1 回ずつ実行した。生ログは `.local/proof-case-registered2.log` /
+`.local/proof-case-unregistered2.log` (git 外)。両 case とも `HOUSEHOLD_TOOL_POLICY=registered` の
+まま (policy label は変えず tool 登録の有無だけ切り替えた)。
+
+| 工程 | `PROOF_TOOLS=custom` (tag `registered`) | `PROOF_TOOLS=none` (tag `unregistered`) |
 | :--- | :--- | :--- |
-| `policy=registered` (既定 ToolPolicy, `mcp: "disabled"`) | Custom Tool `household_list_housework` が実行された (`tool.execution_start` / `tool.execution_complete` を各 1 件、`session.store` に tool_call 1 件) | 内蔵 shell / write tool の `tool.execution_start` は 0 件 (`built_in_shell_calls=[]`) |
-| `policy=disabled` (`available_tools=ToolSet().add_custom("*")`) | 同じ tool が実行された (tool_call 1 件、shell 系 0 件) | 同上 (shell 系 0 件) |
+| 終了 | exit 0 / `RESULT [registered] ok=True` | exit 0 / `RESULT [unregistered] ok=True` |
+| 登録 Custom Tool | 1 件 (`household_list_housework`) | 0 件 |
+| 内蔵 tool disabled list | 18 件 (下記) | 同じ 18 件 |
+| Skills | `household-advisor` / `rule-management` (custom・enabled、container 内 `/app/skills/*/SKILL.md`) | 同じ 2 件 |
+| runtime の tool 名 allow-list | `custom:household_list_housework` + `builtin:skill` | `custom:*` + `builtin:skill` (登録 0 件のため wildcard fallback) |
+| turn 1 (家事一覧 tool) | `aborted=True`、`tool_calls=['household_list_housework']`。`TOOL_EXECUTION_START` / `TOOL_EXECUTION_COMPLETE` 各 1 件 (`success=True`、`tool_call_id=call_3ako7axg`)、`EXTERNAL_TOOL_REQUESTED` / `EXTERNAL_TOOL_COMPLETED` 各 1 件、tool result は 3 項目 (`食器洗い: 週 3 回` / `ゴミ出し: 毎週月曜` / `浴室掃除: 週 1 回`) | `aborted=False`、`tool_calls=['household_list_housework']` (model は同じ name を呼んだ) が `TOOL_EXECUTION_COMPLETE success=False`、`error.code=failure`、message `Tool 'household_list_housework' does not exist.`、content `... does not exist. Available tools that can be called are skill.` |
+| turn 2 (内蔵 shell 試み) | `aborted=False`、`tool_calls=[]`、`built-in_shell_calls=[]` | `aborted=False`、`tool_calls=[]`、`built-in_shell_calls=[]`。reply text は model が自分で書き出した `uname -a` 風の出力 (実行結果なし) |
+| permission | `PERMISSION_REQUESTED` (kind `custom_tool`) → `PERMISSION_COMPLETED` 1 組 (宣言が `approval_mode="ask"`) | `permission_events=` (0 件)。execution 前に permission 要求は立たない |
+| handler 呼び出し | `handler_calls=[{tool: household_list_housework, arguments: {}}]` (1 件) | `handler_calls=[]` (0 件 = tool 関数は一度も実行されない) |
+| execution 到達 | `executed_tools=['household_list_housework']`、`custom_completed=['household_list_housework']` | `custom_rejected=['household_list_housework']`、`custom_completed=[]` |
+| `denied_like_events` | 0 | 0 |
+| 生 event 数 | turn 1 = 700 / turn 2 = 150、unmapped 14 件 / 22 件 | turn 1 = 157 / turn 2 = 152、unmapped 16 件 / 24 件 |
 
-turn events / raw events: registered case turn1 events=436 raw=908、turn2 events=187 raw=1300。
-`wire_types_unmapped_count=` は turn ごとに 16 件 / 24 件で、内訳は `model.*` 系 9 名
-(`model.log`, `model.message`, `model.messages_snapshot`, `model.model_call_started`,
-`model.model_call_success`, `model.response`, `model.tool_execution`, `model.turn_ended`,
-`model.turn_started`) と `session.status` 1 名 (turn 2 で重複カウントされるため件数は turn ごとに 2 倍)。
-これらは pinned `SessionEventType` に dot-style enum value が無く、CLI の `SessionEvent.raw_type`
-でしか観測できない (runtime は `AgentEvent.raw["sdk_raw_type"]` に保持し `type` は `unknown`)。
+**この 2 case で確定した挙動**: Custom Tool を `tools=` へ登録しない session では、model がその name
+を呼んでも runtime 側の handler へは届かず (handler 0 件)、SDK が execution を失敗として返す。
+Phase 0 の tool policy の実際の境界は「登録された name だけ実行できる」であり、permission の deny
+ではなく tool 名の解決失敗として観測される (`denied_like_events=0`)。登録あり側では
+`approval_mode="ask"` により permission 連鎖 (request → completed) が 1 組立ち、runtime の handler が
+approve して tool が実行された。
 
-permission について: runtime は `permission.skip_permission=None` (既定) で SDK の permission 連鎖
-(`permission.requested` → `permission.completed`) を通し、custom tool call に対して
-`CustomToolPermissionHandler` が approve する。live proof では custom tool 実行の連鎖のみ観測され、
-built-in tool への deny 応答は built-in tool 自体が起動しなかったため**未取得** (unit test で検証)。
+内蔵 tool の disabled list 18 件 (両 run で同一): `bash`、`create`、`dynamic_workflows_manage`、
+`edit`、`glob`、`grep`、`list_agents`、`list_bash`、`read_agent`、`read_bash`、
+`run_dynamic_workflow`、`semantic_code_search`、`sql`、`stop_bash`、`task`、`view`、`web_fetch`、
+`write_agent`。`str_replace_editor` / `str_replace_edits` / `skill` はこの list に**含まれない**
+(旧 §4 の 20 件という記述は `10-manual-api-surface-audit.md` の CLI `tool_call_names` dump を
+実行時の allow-list と取り違えた誤り)。`web_search` と `skill` は list の外だが実行は未観測。
 
-### HEAD での再走 (`make proof` = compose run)
+wire 名: mapped は turn ごとに 32 名前後。unmapped は `model.log`、`model.message`、
+`model.messages_snapshot`、`model.model_call_started`、`model.model_call_success`、`model.response`、
+`model.telemetry`、`model.tool_execution`、`model.turn_ended`、`model.turn_failed`、
+`model.turn_started`。これらは pinned `SessionEventType` に dot-style enum value が無く、CLI の
+`SessionEvent.raw_type` でしか観測できない (runtime は `AgentEvent.raw["sdk_raw_type"]` に保持し
+`type` は `unknown`)。`session.status` はいずれの log にも現れなかった。
 
-HEAD で `make proof` (`docker compose --profile checks run --rm proof`) を実行し exit 0
-(`RESULT [registered] ok=True`)。raw log は `.local/` に置いた (git 外)。
+registered case の turn 1 は tool 実行が `success=True` で成功した後に `aborted=True` になった
+(`SessionEventType.ABORT` 1 件 + `AGENT_INTERRUPTED` 1 件、wire 名 `model.turn_failed` 1 件)。
+打ち切りの原因は log から特定できていない (tool call の直後に model 側で失敗しているだけで、
+runtime が SDK へ abort を送った経路ではない)。turn の打ち切りと tool 実行成功の切り分けは
+Phase 1 で追う。
 
-- container: `household-ai-proof-run-*`、`provider=ollama`、`model=gemma4:e2b`、
-  `base_url=http://host.docker.internal:11434/v1` (host-gateway)
-- 内蔵 tool の disabled list 18 件: `bash`, `create`, `dynamic_workflows_manage`, `edit`, `glob`,
-  `grep`, `list_agents`, `list_bash`, `read_agent`, `read_bash`, `run_dynamic_workflow`,
-  `semantic_code_search`, `sql`, `stop_bash`, `task`, `view`, `web_fetch`, `write_agent`
-- `snapshot.skills` = `household-advisor` と `rule-management` (custom / enabled、
-  container 内の `/app/skills/*/SKILL.md`) → §15 Phase 0 項目 9 (Skills 読み込み) を実測
-- turn 1: `aborted=False`、`tool_calls=['household_list_housework']`、
-  reply text `食器洗い、ゴミ出し、浴室掃除の3項目です。`。tool 実行は
-  `tool.execution_start` / `tool.execution_complete` / `external_tool.requested` /
-  `external_tool.completed` が各 1 件、tool result content は 3 項目の一覧 (tool_call_id 1 件)
-- turn 2 (内蔵 tool 試み): `aborted=False`、`tool_calls=[]`、`built_in_shell_calls=[]`
-- permission: `PERMISSION_REQUESTED` → `PERMISSION_COMPLETED` (`PermissionApproved`) が 1 組、
-  `handler_calls=[{tool: household_list_housework, arguments: {}}]`、`denied_like_events=0`
-- wire types: mapped 32 名、unmapped 24 件。unmapped の内訳は CLI 側の `model.*` 系 9 名
-  (`model.log` / `model.message` / `model.messages_snapshot` / `model.model_call_started` /
-  `model.model_call_success` / `model.response` / `model.tool_execution` / `model.turn_ended` /
-  `model_turn_started`)
+permission: 宣言は `approval_mode="ask"` なので provider は `Tool(skip_permission=False)` を渡す
+(`backend/app/agent/provider.py` の Tool 構築)。custom tool call で SDK の permission 連鎖
+(`permission.requested` → `permission.completed`) が 1 組観測され、runtime 側の handler が approve した。
+built-in tool への deny 応答は built-in tool が 1 件も起動しなかったため**未取得** (turn 2 の shell
+試みは tool 実行 0 件のまま model が実行結果らしい文章を出力している)。non-custom tool への deny
+応答は unit test (`tests/unit/test_provider.py` の `test_permission_denies_non_custom_tool`) で検証する。
+
+---
 
 ## 5. §15.4 版一覧との対応
 
