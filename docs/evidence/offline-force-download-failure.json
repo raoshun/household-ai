@@ -3,9 +3,9 @@
   "network_probe": "172.17.0.1:8098 unreachable (OSError)",
   "download_exit_code": 1,
   "failure_lines": [
-    "Error: Failed to download checksums from http://172.17.0.1:8099/v1.0.107/SHA256SUMS.txt: Failed to download from http://172.17.0.1:8099/v1.0.107/SHA256SUMS.txt: <urlopen error [Errno 101] Network is unreachable>"
+    "Error: Failed to download checksums from https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt: Failed to download from https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt: <urlopen error [Errno -3] Temporary failure in name resolution>"
   ],
-  "extract_dir": "/tmp/empty-cache-rsg2yyr_",
-  "output_tail": "Downloading Copilot runtime v1.0.107...\nError: Failed to download checksums from http://172.17.0.1:8099/v1.0.107/SHA256SUMS.txt: Failed to download from http://172.17.0.1:8099/v1.0.107/SHA256SUMS.txt: <urlopen error [Errno 101] Network is unreachable>\n\nIf you are in an offline or firewalled environment, set COPILOT_CLI_PATH to point to a manually-installed binary.\n",
+  "extract_dir": "/tmp/empty-cache-phtlwoba",
+  "output_tail": "Downloading Copilot runtime v1.0.107...\nError: Failed to download checksums from https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt: Failed to download from https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt: <urlopen error [Errno -3] Temporary failure in name resolution>\n\nIf you are in an offline or firewalled environment, set COPILOT_CLI_PATH to point to a manually-installed binary.\n",
   "extract_dir_files": []
 }

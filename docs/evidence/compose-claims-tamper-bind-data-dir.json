@@ -1,0 +1,9 @@
+{
+  "gate": "compose-claims-tamper",
+  "tamper_mode": "bind-data-dir",
+  "tamper_marker": "runtime mount ./data:/app/data",
+  "target_claim": "data_volume_mount",
+  "reject_reason": "ComposeClaimsError: data_volume_mount 不合格: named_volumes=[\"household-data\"] runtime=[\"./data:/app/data:rw\"]",
+  "guard_detected": true,
+  "host_path_redaction": "host repo root 前方は <repo> へ mask 済み (--host-repo-root)"
+}
