@@ -1107,6 +1107,37 @@ Python SDKが提供するCLI同梱方式を優先する。
 
 認証情報をコンテナイメージに含めてはならない。
 
+## 13.4 実装済みの構成と検証 track
+
+Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 の frontend / backend は、
+初期段階では runtime 1 service に集約し (frontend は Phase 3)、検証用 service を profile で分離する。
+
+| service | profile | image | 用途 |
+| :--- | :--- | :--- | :--- |
+| `runtime` | 無し (default up) | `household-ai-runtime-test:0.1.0` | API / Agent 実行。`household-data` named volume を `/app/data` へ mount |
+| `gate` | `checks` | 同上 | lint / test / claims 検査。working tree を `:ro` で mount |
+| `proof` | `checks` | 同上 | offline / live の proof 実行。session store と runtime cache は `/tmp` 退避 |
+
+永続化は named volume `household-data` で行う (13.2 の「ホスト側のディレクトリ」は docker が
+管理する named volume 実装とし、`./data` の bind mount は使わない)。model への outbound は
+`host.docker.internal:host-gateway` で LAN の Ollama  gateway を経由する。
+
+検証 track はすべて pinned image 内で実行する (host へ pip install しない)。証跡は
+`docs/evidence/` に置き、host の絶対 path は `<repo>` へ mask してから書く。
+
+| 検証 | target | 証跡 |
+| :--- | :--- | :--- |
+| pin 照合 (build 時) | `make gate` | `docs/pinned-runtime-versions.json` |
+| lint / unit test | `make lint test` | (ログのみ) |
+| offline cache / runtime | `make prove-offline` | `offline-runtime-proof.json` ほか 2 件 |
+| negative gate (guard が defect を検出) | `make prove-negative-gates` | `negative-gates.md` |
+| compose 構成 claims (8 claims) | `make gate-compose-claims` | `compose-claims.json`, `compose-claims-tamper-*.json` |
+
+手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
+Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを
+対象とする (expand 生成は gate image に docker CLI が無いため host 側)、built-in tool への deny 応答は
+実測未取得 (unit test 検証)。
+
 ---
 
 # 14. テスト要件

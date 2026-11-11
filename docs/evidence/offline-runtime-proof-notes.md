@@ -93,3 +93,43 @@ built-in tool への deny 応答は built-in tool 自体が起動しなかった
 ## 5. §15.4 版一覧との対応
 
 [capability-matrix.md](../capability-matrix.md) §6 の pinned 表と本記録の pinned 版は一致 (sdk 1.0.29 / CLI 1.0.107 / linux-x64)。
+
+## 6. compose claims gate (展開構成の検査)
+
+`docker-compose.yml` が書いた通りに展開されているかを、実展開値から検査する track。
+実行は `make gate-compose-claims` (stage → claims → tamper)。
+
+| target | 何を走らせるか | evidence |
+| :--- | :--- | :--- |
+| `compose-claims-stage` | host の `docker compose --profile checks --env-file /dev/null config --format json` で展開 JSON を `.local/compose-claims/` へ staging し、検査用の compose / Dockerfile / .dockerignore copy を置く | (staging のみ。git 外) |
+| `prove-compose-claims` | pinned image 内で claims 8 件を検査 | `compose-claims.json` |
+| `prove-compose-claims-tamper` | 壊した copy に対して同じ検査を 4 case 実行し、guard が defect を拒否することを実証 | `compose-claims-tamper-<mode>.json` (4 件) |
+
+claims 8 件 (id 順): `phase0_compose_service_set` / `single_pinned_image` /
+`credentials_not_baked` / `data_volume_mount` / `host_ollama_gateway` /
+`gate_uses_working_tree_ro` / `proof_state_in_container_tmp` /
+`secrets_and_data_excluded_from_image`。
+
+tamper 4 case (`--tamper <mode>`) と検出 claim:
+
+| tamper mode | 壊す内容 | 検出する claim |
+| :--- | :--- | :--- |
+| `literal-credential` | compose file へ literal の API key を焼付ける | `credentials_not_baked` |
+| `bind-data-dir` | named volume を `./data` bind mount へ差し替える | `data_volume_mount` |
+| `unprofiled-gate` | gate の profile を外して default up に入れる | `phase0_compose_service_set` |
+| `baked-secret-in-image` | `.env` / data dir を COPY する Dockerfile に差し替える | `secrets_and_data_excluded_from_image` |
+
+evidence の host path について: gate は host repo root を `<repo>` へ mask してから書く
+(`redact_host_paths` / `write_evidence`)。mask 後の payload に host root が残っている場合は
+書き出さず失敗する。unit test は `tests/unit/test_phase0_compose_claims.py`
+(pinned image の `make test` で走る。gate container には `docs/evidence` が mount されないため
+evidence file を読む test は置かない)。
+
+残存局限 (Phase 0 で closed にしていないこと):
+
+- 実 `docker compose up` の起動証跡はこの gate を含まない (検査対象は expand 結果)。
+- gate 用 image に docker CLI が無いため expand は host 側で行う。container 側で見るのは
+  expand 済み JSON と compose / Dockerfile / .dockerignore の copy だけ。
+- expand は `--env-file /dev/null` なので、展開値は compose file の既定値 / placeholder
+  (`AI_API_KEY: "local-dummy"`, `COPILOT_GITHUB_TOKEN: ""`) であり、host の実 env を反映しない。
+- §4 の live proof 同様、built-in tool への deny 応答は実測未取得 (unit test 検証)。
