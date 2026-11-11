@@ -16,7 +16,9 @@
   "download": {
     "release_repo": "github/copilot-cli",
     "tag": "v1.0.107",
-    "checksums_url": "https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt", "default_base_url": "https://github.com/github/copilot-cli/releases/download", "release_path": "v1.0.107/SHA256SUMS.txt",
+    "checksums_url": "https://github.com/github/copilot-cli/releases/download/v1.0.107/SHA256SUMS.txt",
+    "default_base_url": "https://github.com/github/copilot-cli/releases/download",
+    "release_path": "v1.0.107/SHA256SUMS.txt",
     "downloads_checksums_first": true,
     "base_url_override_env": "COPILOT_CLI_DOWNLOAD_BASE_URL",
     "asset_name_pattern": "github-copilot-1.0.107-<runtime_platform>.tgz",
@@ -69,9 +71,9 @@
   "verification": {
     "build_gate": "backend/Dockerfile build で python /app/tests/proofs/verify_pinned_manifest.py を実行 (make verify-pinned でも確認可)",
     "live_proof": "make proof (docker compose run --rm proof python /app/tests/proofs/phase0_live_proof.py)",
-    "offline_runtime_proof": "make proof-offline (docker run --network none で runtime 起動と Custom Tool 登録を確認)",
+    "offline_runtime_proof": "make prove-offline (network 遮断 container で download 経路再実行 -> cache hit) / make prove-offline-negative (network 遮断で force download が失敗) / make prove-offline-runtime (network 遮断 container で runtime 起動と Custom Tool 登録)",
     "mirror_build": "make runtime-mirror && make build-offline (COPILOT_CLI_DOWNLOAD_BASE_URL=http://172.17.0.1:<port>)",
-    "negative_gates": "manifest 改ざん / mirror URL 化 / staging digest 不一致 / network 遮断 download 失敗の 4 系統すべて failure を確認"
+    "negative_gates": "make prove-manifest-version-tamper / prove-manifest-digest-tamper / prove-offline-negative / prove-offline-runtime の 4 gate。実行ログは docs/evidence/negative-gates.md (manifest 版・digest 改ざんは integrity / staging 照合で failure)"
   },
   "release_asset_names": {
     "linux-x64": "github-copilot-1.0.107-linux-x64.tgz",
@@ -82,5 +84,28 @@
     "darwin-x64": "github-copilot-1.0.107-darwin-x64.tgz",
     "win32-x64": "github-copilot-1.0.107-win32-x64.tgz",
     "win32-arm64": "github-copilot-1.0.107-win32-arm64.tgz"
+  },
+  "baked_image_cache": {
+    "path": "/tmp/xdg-cache/github-copilot-sdk/cli/1.0.107/prebuilds/linux-x64",
+    "bake_env": "backend/Dockerfile: XDG_CACHE_HOME=/tmp/xdg-cache + COPILOT_CLI_DOWNLOAD_BASE_URL (ARG, default GitHub release URL)",
+    "bake_cmd": "python -m copilot download-runtime (verify_pinned_manifest.py 後に実行)",
+    "size": "165 MB",
+    "entries": [
+      "animations",
+      "builtin",
+      "builtin-skills",
+      "copilot-runtime",
+      "definitions",
+      "plugins",
+      "restart-supervisor.js",
+      "ripgrep",
+      "runtime.node",
+      "schemas",
+      "tgrep"
+    ],
+    "marker": ".hostless-runtime-assets-v2",
+    "copilot_runtime_sha256": "1d809dd4789dab2305bcd7bb9a6d5057ccf5cfca86705b463d374982c0415e42",
+    "copilot_runtime_sha512": "abfcdbfb1b5e8f7119e888f87f3e9caa6b6cbd63889394db456f09133e765ab927e099eef46d51cd4479cc1a29ef6f3cb13deebd9c03814e577888ff86acf70d",
+    "measured_by": "docker run --rm --network none household-ai-runtime-test:0.1.0 sha512sum / sha256sum (extract 済み file の digest. release asset tgz の digest とは別 object)"
   }
 }
