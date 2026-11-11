@@ -23,6 +23,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "backend"))
 
+from app.agent.events import wire_type  # noqa: E402
 from app.agent.provider import (  # noqa: E402 (sys.path 操作後に import する)
     CopilotAgentSession,
     CustomToolDeclaration,
@@ -114,12 +115,33 @@ def dump_tool_events() -> None:
 
 def summarize(tag: str) -> None:
     types = collections.Counter(str(getattr(ev, "type", "?")) for ev in raw_events)
+    # raw_events に積み上がるのは SDK の SessionEvent オブジェクト。wire 名は
+    # events.wire_type() で辿り、runtime の normalize がマップしない wire 名は enum が
+    # UNKNOWN (= "unknown") に解決し、素の名前は SessionEvent.raw_type へ残る。
+    # 網羅性を実測するため mapped / unmapped を分離する (§15)。
+    mapped: collections.Counter[str] = collections.Counter()
+    unmapped: collections.Counter[str] = collections.Counter()
+    for event in raw_events:
+        name = wire_type(getattr(event, "type", None), getattr(event, "raw_type", None))
+        if name != "unknown":
+            mapped[name] += 1
+            continue
+        raw_name = getattr(event, "raw_type", None)
+        unmapped[raw_name if isinstance(raw_name, str) and raw_name else "<empty>"] += 1
+    unknown_count = sum(unmapped.values())
+    mapped_text = ", ".join(f"{k}:{v}" for k, v in sorted(mapped.items()))
+    unmapped_text = ", ".join(f"{k}:{v}" for k, v in sorted(unmapped.items())) or "none"
     print(f"\n===== proof [{tag}] =====", flush=True)
     print(f"[proof] raw_event_count={len(raw_events)}", flush=True)
     for info in dump_disabled_tools():
         print(f"[proof] {info}", flush=True)
     print(
         f"[proof] sdk_types={', '.join(f'{k}:{v}' for k, v in sorted(types.items()))}",
+        flush=True,
+    )
+    print(f"[proof] wire_types_mapped={mapped_text}", flush=True)
+    print(
+        f"[proof] wire_types_unmapped_count={unknown_count} names={unmapped_text}",
         flush=True,
     )
     print(
@@ -233,7 +255,13 @@ async def main() -> int:
         format="%(levelname)s %(name)s %(message)s",
         stream=sys.stdout,
     )
-    tag = sys.argv[1] if len(sys.argv) > 1 else "registered"
+    # 既定 tag は env の policy と揃える (env だけで policy を切り替えたときに
+    # 「registered」ラベルで disabled 計測が出るのを防ぐ)。
+    tag = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.environ.get("HOUSEHOLD_TOOL_POLICY", "registered")
+    )
     return await run_policy(tag)
 
 
