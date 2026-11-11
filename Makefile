@@ -15,12 +15,14 @@ PROOF_TOOLS ?= custom
 .PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
 .PHONY: prove-manifest-version-tamper prove-manifest-digest-tamper
 .PHONY: compose-claims-stage prove-compose-claims prove-compose-claims-tamper gate-compose-claims
+.PHONY: prove-live-proof-claims gate-live-proof-claims
 
 help: ## 使い方の一覧
 	@printf '%s\n' "make build | build-offline | up | down | logs | gate | proof | probe | lint | test | fmt"
 	@printf '%s\n' "make verify-pinned | runtime-mirror | runtime-serve (network 制限環境向け)"
 	@printf '%s\n' "make prove-offline | prove-offline-negative | prove-offline-runtime (§15 network 遮断 proof)"
 	@printf '%s\n' "make prove-manifest-version-tamper | prove-manifest-digest-tamper | prove-negative-gates (integrity negative gate)"
+	@printf '%s\n' "make prove-live-proof-claims | gate-live-proof-claims (live proof 2 case gate)"
 
 build: ## Docker image を build する
 	$(COMPOSE) build
@@ -106,6 +108,36 @@ prove-compose-claims-tamper: compose-claims-stage ## 4 とおり compose defect 
 	@echo "negative gate OK: defect 検出。evidence: $(EVIDENCE)/compose-claims-tamper-*.json"
 
 gate-compose-claims: gate prove-compose-claims prove-compose-claims-tamper ## unit test + compose claims 実測 + tamper を順に実行 (§13 / §15)
+
+LIVE_PROOF_REGISTERED_LOG ?= .local/proof-case-registered2.log
+LIVE_PROOF_UNREGISTERED_LOG ?= .local/proof-case-unregistered2.log
+LIVE_PROOF_TMP ?= .local/live-proof
+LIVE_PROOF_EVIDENCE ?= docs/evidence/live-proof-two-cases.json
+LIVE_PROOF_SCRIPT := /app/tests/proofs/summarize_live_proof_logs.py
+# 集計と gate 判定は pinned image 内で実行する (§15 再現性)。source と log は ro mount、
+# 書き出しは /out だけ (--user で host uid に合わせて evidence へ保存する)。
+LIVE_PROOF_MOUNTS = -v $(CURDIR)/tests:/app/tests:ro -v $(CURDIR)/$(LIVE_PROOF_TMP)/out:/out
+
+prove-live-proof-claims: ## 2 case live proof log の gate 集計を pinned image 内で実測
+	@test -f $(LIVE_PROOF_REGISTERED_LOG) && test -f $(LIVE_PROOF_UNREGISTERED_LOG)
+	@mkdir -p $(LIVE_PROOF_TMP)/out $(EVIDENCE)
+	@$(DOCKER) run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  $(LIVE_PROOF_MOUNTS) \
+	  -v $(CURDIR)/$(LIVE_PROOF_REGISTERED_LOG):/proof/registered.log:ro \
+	  -v $(CURDIR)/$(LIVE_PROOF_UNREGISTERED_LOG):/proof/unregistered.log:ro \
+	  $(IMAGE) sh -c \
+	  ".venv/bin/python $(LIVE_PROOF_SCRIPT) /proof/registered.log /proof/unregistered.log --gate --output /out/live-proof-two-cases.json --redact-base-url"
+	@cp $(LIVE_PROOF_TMP)/out/live-proof-two-cases.json $(LIVE_PROOF_EVIDENCE)
+	@echo "evidence: $(LIVE_PROOF_EVIDENCE) (集計と gate 判定は pinned image 内)"
+
+gate-live-proof-claims: ## 保存済み evidence JSON の gate を pinned image 内で再検証 (runtime 更新前の値)
+	@test -f $(LIVE_PROOF_EVIDENCE)
+	@$(DOCKER) run --rm --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	  -v $(CURDIR)/tests:/app/tests:ro \
+	  -v $(CURDIR)/$(LIVE_PROOF_EVIDENCE):/evidence/live-proof-two-cases.json:ro \
+	  $(IMAGE) sh -c \
+	  ".venv/bin/python $(LIVE_PROOF_SCRIPT) --recheck-evidence /evidence/live-proof-two-cases.json"
+	@echo "gate-live-proof-claims OK: evidence の gate 再検証 PASS (runtime 更新前と同じ結果)"
 
 # --- §15 network 遮断環境の proof -----------------------------------------------
 # bake とは image build 内の `python -m copilot download-runtime` が download までを
