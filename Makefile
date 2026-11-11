@@ -93,19 +93,24 @@ prove-offline-runtime: ## network 遮断 container で runtime 起動と Custom 
 	@echo "evidence: $(EVIDENCE)/offline-runtime-proof.json"
 
 # pinned manifest を script 側が信用しているかを問う negative gate。manifest の写しを
-# 改ざんして実行し、failure になることを shell の反転で確認する (通れば gate 失敗)。
+# 改ざんして実行し、guard が reject すること (exit code != 0) を期待値とする。
+# 通過した場合は target 自身が exit 1 して fail する。
 GATE_TMP ?= .local/negative-gates
+GATE_LOG ?= docs/evidence/negative-gates.md
 
 prove-manifest-version-tamper: ## manifest の SDK 版改ざんが integrity check で failure になることを実証
 	@mkdir -p $(GATE_TMP)
 	@.venv/bin/python -c "import json,pathlib;p=pathlib.Path('$(GATE_TMP)/manifest-version-tamper.json');d=json.load(open('docs/pinned-runtime-versions.json'));d['sdk_version']='9.9.9';p.write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
-	@if COPILOT_SDK_PKG=github-copilot .venv/bin/python tests/proofs/verify_pinned_manifest.py --manifest $(GATE_TMP)/manifest-version-tamper.json >/dev/null 2>&1; then echo "FAILED: 改ざん manifest が integrity check を通过"; exit 1; fi
-	@echo "negative gate OK: manifest 版改ざんは failure になった"
+	@COPILOT_SDK_PKG=github-copilot .venv/bin/python tests/proofs/verify_pinned_manifest.py --manifest $(GATE_TMP)/manifest-version-tamper.json >$(GATE_TMP)/version-tamper.out 2>&1; rc=$$?; \
+	if [ $$rc -eq 0 ]; then echo "FAILED: 改ざん manifest が integrity check を通过"; exit 1; fi; \
+	echo "negative gate OK: verify_pinned_manifest.py は exit $$rc で reject した"; tail -n 3 $(GATE_TMP)/version-tamper.out
 
 prove-manifest-digest-tamper: ## manifest の runtime digest 改ざんが staging 照合で failure になることを実証
 	@mkdir -p $(GATE_TMP)/mirror
 	@.venv/bin/python -c "import json,pathlib,shutil;src=pathlib.Path('docs/pinned-runtime-versions.json');d=json.loads(src.read_text(encoding='utf-8'));tag=d['download']['tag'];dst=pathlib.Path('$(GATE_TMP)/mirror');dst.mkdir(parents=True,exist_ok=True);shutil.copytree(pathlib.Path('$(MIRROR_DIR)')/tag,dst/tag,dirs_exist_ok=True);d['runtime_platforms'][d['runtime_platform']]='0'*64;pathlib.Path('$(GATE_TMP)/manifest-digest-tamper.json').write_text(json.dumps(d,ensure_ascii=False,indent=2)+chr(10))"
-	@if .venv/bin/python tests/proofs/fetch_runtime_mirror.py --manifest $(GATE_TMP)/manifest-digest-tamper.json --out $(GATE_TMP)/mirror >/dev/null 2>&1; then echo "FAILED: digest 改ざんが staging 照合を通过"; exit 1; fi
-	@echo "negative gate OK: digest 改ざんは failure になった (staging 照合)"
+	@.venv/bin/python tests/proofs/fetch_runtime_mirror.py --manifest $(GATE_TMP)/manifest-digest-tamper.json --out $(GATE_TMP)/mirror >$(GATE_TMP)/digest-tamper.out 2>&1; rc=$$?; \
+	if [ $$rc -eq 0 ]; then echo "FAILED: digest 改ざんが staging 照合を通过"; exit 1; fi; \
+	echo "negative gate OK: fetch_runtime_mirror.py は exit $$rc で reject した"; tail -n 3 $(GATE_TMP)/digest-tamper.out
 
-prove-negative-gates: prove-manifest-version-tamper prove-manifest-digest-tamper prove-offline-negative prove-offline-runtime ## 4 negative gate を順に実行
+prove-negative-gates: ## 4 本の negative gate を順に実行し docs/evidence へ保存
+	@bash tests/proofs/collect_negative_gates.sh $(GATE_TMP) $(GATE_LOG)
