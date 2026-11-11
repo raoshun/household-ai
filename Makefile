@@ -7,6 +7,9 @@ MIRROR_DIR ?= .local/mirror
 MIRROR_PORT ?= 8099
 MIRROR_BIND ?= 172.17.0.1
 EVIDENCE ?= docs/evidence
+# proof の tool 登録 case: custom (既定, Custom Tool を登録) / none (未登録)。
+# `make proof PROOF_TOOLS=none` で内蔵 tool-only の case を計測する。
+PROOF_TOOLS ?= custom
 
 .PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror
 .PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
@@ -48,7 +51,7 @@ gate: ## import 確認 + ruff + unit test を Docker で実行 (既定の検証)
 	$(COMPOSE) --profile checks run --rm gate
 
 proof: ## Custom Tool / permission の live proof を Docker で実行
-	$(COMPOSE) --profile checks run --rm proof
+	$(COMPOSE) --profile checks run --rm -e HOUSEHOLD_PROOF_TOOLS=$(PROOF_TOOLS) proof
 
 probe: ## pinned SDK の API 面を実測 (pinned image 内で実行)
 	@docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py

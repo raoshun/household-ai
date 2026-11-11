@@ -33,6 +33,24 @@ from app.config import load_settings  # noqa: E402
 
 MODEL = os.environ.get("AI_MODEL", "gemma4:e2b")
 TOOL_NAME = "household_list_housework"
+# Custom Tool を登録する case (custom) と登録しない case (none) を切り替える。
+# 両 case で内蔵 file/shell tool が実行されないことを実測するために使う。
+TOOLS_ENV = "HOUSEHOLD_PROOF_TOOLS"
+CASE_TAGS = {"custom": "registered", "none": "unregistered"}
+BUILTIN_TOOL_NAMES = {
+    "bash",
+    "run_bash",
+    "read_bash",
+    "stop_bash",
+    "view",
+    "edit",
+    "write",
+    "create",
+    "grep",
+    "glob",
+    "web_fetch",
+    "sql",
+}
 PROMPT_TOOL = (
     f"{TOOL_NAME} ツールを必ず 1 回呼び出して、家用家事の一覧を取得し、"
     "3 項目を日本語で伝えてください。ツールを使わずに答えないでください。"
@@ -85,6 +103,12 @@ def build_declaration() -> CustomToolDeclaration:
     )
 
 
+def tool_case() -> str:
+    """Custom Tool を登録する case ('custom') と非登録 case ('none') を返す。"""
+    raw = os.environ.get(TOOLS_ENV, "custom").strip().lower()
+    return raw if raw in CASE_TAGS else "custom"
+
+
 def dump_disabled_tools() -> list[str]:
     lines: list[str] = []
     for ev in raw_events:
@@ -111,6 +135,22 @@ def dump_tool_events() -> None:
                 if not k.startswith("_") and v is not None
             )[:400]
         print(f"[proof] ev {etype}: {summary}", flush=True)
+
+
+def tool_outcomes() -> list[tuple[str, bool]]:
+    """TOOL_EXECUTION_COMPLETE から (tool 名, success) を拾う。
+
+    request だけの tool 名と実際に execution まで到達した tool 名を区別するため使う。
+    未登録 name は execution failure になる (does not exist を 2026-11-11 実測)。
+    """
+    outcomes: list[tuple[str, bool]] = []
+    for ev in raw_events:
+        if "tool.execution_complete" not in str(getattr(ev, "type", "")).lower():
+            continue
+        data = getattr(ev, "data", None)
+        name = getattr(data, "tool_name", None) or "<unknown>"
+        outcomes.append((str(name), bool(getattr(data, "success", False))))
+    return outcomes
 
 
 def summarize(tag: str) -> None:
@@ -164,17 +204,26 @@ def summarize(tag: str) -> None:
     for ev in denied[:5]:
         print(f"[proof]   {type(ev).__name__} {ev}", flush=True)
     print(f"[proof] handler_calls={handler_calls}", flush=True)
+    print(f"[proof] tool_outcomes={tool_outcomes()}", flush=True)
     dump_tool_events()
 
 
-async def run_policy(tag: str) -> int:
+async def run_policy(tag: str | None = None) -> int:
     raw_events.clear()
     handler_calls.clear()
+    case = tool_case()
+    tag = tag or CASE_TAGS[case]
+    tools = [build_declaration()] if case == "custom" else []
+    registered = len(tools or [])
     settings = load_settings(REPO)
     policy = os.environ.get("HOUSEHOLD_TOOL_POLICY", "registered")
     print(
-        f"[proof] [{tag}] policy={policy}"
-        f" provider={settings.provider} model={MODEL}"
+        f"[proof] [{tag}] policy={policy} tool_case={case}"
+        f" registered_custom_tools={registered}",
+        flush=True,
+    )
+    print(
+        f"[proof] [{tag}] provider={settings.provider} model={MODEL}"
         f" base_url={settings.byok_base_url} skills={settings.enable_skills}",
         flush=True,
     )
@@ -189,7 +238,7 @@ async def run_policy(tag: str) -> int:
 
         handle = await runtime.create_session(
             model=MODEL,
-            tools=[build_declaration()],
+            tools=tools,
             system_message=(
                 "あなたは家庭内ルートを支援するアシスタントです。家用家事の質問には"
                 f"必ず {TOOL_NAME} ツールを呼び出して答えください。"
@@ -218,32 +267,41 @@ async def run_policy(tag: str) -> int:
             flush=True,
         )
         print(f"[proof] turn2 text={(turn2.text or '')[:300]!r}", flush=True)
-        builtin_names = {
-            "bash",
-            "run_bash",
-            "read_bash",
-            "stop_bash",
-            "view",
-            "edit",
-            "write",
-            "create",
-            "grep",
-            "glob",
-            "web_fetch",
-            "sql",
-        }
         shell_calls = [
-            str(call) for call in turn2.tool_calls if str(call).lower() in builtin_names
+            str(call)
+            for call in turn2.tool_calls
+            if str(call).lower() in BUILTIN_TOOL_NAMES
         ]
         print(f"[proof] built-in_shell_calls={shell_calls}", flush=True)
         summarize(f"{tag}/shell-attempt")
 
         await runtime.close_session(handle.session_id)
 
-    ok = (
-        bool(handler_calls)
-        and TOOL_NAME in [str(call) for call in turn.tool_calls]
-        and not shell_calls
+    outcomes = tool_outcomes()
+    requested = [str(call) for call in [*turn.tool_calls, *turn2.tool_calls]]
+    # execution まで到達した tool 名 (success 成否を問わず) だけを見る。
+    executed = sorted({name for name, _ in outcomes})
+    builtins_executed = sorted(n for n in executed if n.lower() in BUILTIN_TOOL_NAMES)
+    custom_completed = [n for n, ok_done in outcomes if n == TOOL_NAME and ok_done]
+    custom_failed = [n for n, ok_done in outcomes if n == TOOL_NAME and not ok_done]
+    custom_executed = bool(custom_completed)
+    if case == "custom":
+        # 宣言 tool は handler 実行、内蔵 file/bash tool は到達しないこと。
+        ok = bool(handler_calls) and bool(custom_completed) and not builtins_executed
+    else:
+        # 未登録 name は handler 実行も success もないこと。
+        ok = (
+            not handler_calls
+            and not custom_executed
+            and bool(custom_failed)
+            and not builtins_executed
+        )
+    print(
+        f"[proof] [{tag}] tool_case={case} registered_custom_tools={registered}"
+        f" requested_tools={requested} executed_tools={executed}"
+        f" handler_calls={len(handler_calls)} custom_completed={custom_completed}"
+        f" custom_rejected={custom_failed} builtins_executed={builtins_executed}",
+        flush=True,
     )
     print(f"[proof] RESULT [{tag}] ok={ok}", flush=True)
     return 0 if ok else 1
@@ -255,13 +313,9 @@ async def main() -> int:
         format="%(levelname)s %(name)s %(message)s",
         stream=sys.stdout,
     )
-    # 既定 tag は env の policy と揃える (env だけで policy を切り替えたときに
-    # 「registered」ラベルで disabled 計測が出るのを防ぐ)。
-    tag = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else os.environ.get("HOUSEHOLD_TOOL_POLICY", "registered")
-    )
+    # tag は case 名から決める (env の HOUSEHOLD_TOOL_POLICY は session の tool 許可
+    # 方針の名前であり、proof の tool 登録 case と混同しないため tag には使わない)。
+    tag = sys.argv[1] if len(sys.argv) > 1 else None
     return await run_policy(tag)
 
 
