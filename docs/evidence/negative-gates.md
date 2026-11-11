@@ -1,6 +1,6 @@
 # Phase 0 negative gates 実行ログ
 
-実行: `make prove-negative-gates` (helper: `tests/proofs/collect_negative_gates.sh`)。期待 exit code は 0 = guard が defect を検出。収集時刻: 2026-11-11T03:38:03Z UTC
+実行: `make prove-negative-gates` (helper: `tests/proofs/collect_negative_gates.sh`)。期待 exit code は 0 = guard が defect を検出。収集時刻: 2026-11-11T12:09:18Z UTC
 
 ## make prove-manifest-version-tamper
 
@@ -56,7 +56,7 @@ Traceback (most recent call last):
     result = await future
              ^^^^^^^^^^^^
 copilot._jsonrpc.JsonRpcError: JSON-RPC Error -32603: Failed to get response from the AI model; retried 5 times (total retry wait time: 23.00 seconds) Last error: Failed native model HTTP request: error sending request for url (http://host.docker.internal:11434/v1/chat/completions): client error (Connect): dns error: error resolving DNS: failed to lookup address information: Temporary failure in name resolution [ENOTFOUND]
-[offline-proof] {"case": "runtime-network-none", "network_reachable": false, "network_detail": "172.17.0.1:8098 unreachable (OSError)", "provider": "ollama", "model": null, "provider_settings": {"enable_skills": true, "session_store_enabled": false, "turn_timeout_seconds": 180}, "runtime_started": true, "health_ready": true, "health_detail": "", "list_models_count": 0, "session_id": "bf2a8e15-88e5-4cef-b868-9b76767182d6", "snapshot_tool_names": ["ofc_home_route_probe"], "tool_registered": true, "turn_aborted": true, "turn_tool_calls": [], "turn_text": "", "turn_events": 1, "handler_calls": [], "session_closed": true, "runtime_stopped": true}
+[offline-proof] {"case": "runtime-network-none", "network_reachable": false, "network_detail": "172.17.0.1:8098 unreachable (OSError)", "provider": "ollama", "model": null, "provider_settings": {"enable_skills": true, "session_store_enabled": false, "turn_timeout_seconds": 180}, "runtime_started": true, "health_ready": true, "health_detail": "", "list_models_count": 0, "session_id": "d67c9230-174a-4d74-a59d-695fa1a765be", "snapshot_tool_names": ["ofc_home_route_probe"], "tool_registered": true, "turn_aborted": true, "turn_tool_calls": [], "turn_text": "", "turn_events": 1, "handler_calls": [], "session_closed": true, "runtime_stopped": true}
 evidence written: /tmp/evidence/offline-runtime-proof.json
 evidence: docs/evidence/offline-runtime-proof.json
 
