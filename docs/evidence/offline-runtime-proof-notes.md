@@ -90,6 +90,30 @@ permission について: runtime は `permission.skip_permission=None` (既定) 
 `CustomToolPermissionHandler` が approve する。live proof では custom tool 実行の連鎖のみ観測され、
 built-in tool への deny 応答は built-in tool 自体が起動しなかったため**未取得** (unit test で検証)。
 
+### HEAD での再走 (`make proof` = compose run)
+
+HEAD で `make proof` (`docker compose --profile checks run --rm proof`) を実行し exit 0
+(`RESULT [registered] ok=True`)。raw log は `.local/` に置いた (git 外)。
+
+- container: `household-ai-proof-run-*`、`provider=ollama`、`model=gemma4:e2b`、
+  `base_url=http://host.docker.internal:11434/v1` (host-gateway)
+- 内蔵 tool の disabled list 18 件: `bash`, `create`, `dynamic_workflows_manage`, `edit`, `glob`,
+  `grep`, `list_agents`, `list_bash`, `read_agent`, `read_bash`, `run_dynamic_workflow`,
+  `semantic_code_search`, `sql`, `stop_bash`, `task`, `view`, `web_fetch`, `write_agent`
+- `snapshot.skills` = `household-advisor` と `rule-management` (custom / enabled、
+  container 内の `/app/skills/*/SKILL.md`) → §15 Phase 0 項目 9 (Skills 読み込み) を実測
+- turn 1: `aborted=False`、`tool_calls=['household_list_housework']`、
+  reply text `食器洗い、ゴミ出し、浴室掃除の3項目です。`。tool 実行は
+  `tool.execution_start` / `tool.execution_complete` / `external_tool.requested` /
+  `external_tool.completed` が各 1 件、tool result content は 3 項目の一覧 (tool_call_id 1 件)
+- turn 2 (内蔵 tool 試み): `aborted=False`、`tool_calls=[]`、`built_in_shell_calls=[]`
+- permission: `PERMISSION_REQUESTED` → `PERMISSION_COMPLETED` (`PermissionApproved`) が 1 組、
+  `handler_calls=[{tool: household_list_housework, arguments: {}}]`、`denied_like_events=0`
+- wire types: mapped 32 名、unmapped 24 件。unmapped の内訳は CLI 側の `model.*` 系 9 名
+  (`model.log` / `model.message` / `model.messages_snapshot` / `model.model_call_started` /
+  `model.model_call_success` / `model.response` / `model.tool_execution` / `model.turn_ended` /
+  `model_turn_started`)
+
 ## 5. §15.4 版一覧との対応
 
 [capability-matrix.md](../capability-matrix.md) §6 の pinned 表と本記録の pinned 版は一致 (sdk 1.0.29 / CLI 1.0.107 / linux-x64)。
