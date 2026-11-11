@@ -137,20 +137,40 @@ def dump_tool_events() -> None:
         print(f"[proof] ev {etype}: {summary}", flush=True)
 
 
-def tool_outcomes() -> list[tuple[str, bool]]:
-    """TOOL_EXECUTION_COMPLETE から (tool 名, success) を拾う。
-
-    request だけの tool 名と実際に execution まで到達した tool 名を区別するため使う。
-    未登録 name は execution failure になる (does not exist を 2026-11-11 実測)。
-    """
-    outcomes: list[tuple[str, bool]] = []
+def tool_names_by_call() -> dict[str, str]:
+    """tool_call_id から tool 名を引くための map (start / request event から作る)。"""
+    names: dict[str, str] = {}
     for ev in raw_events:
-        if "tool.execution_complete" not in str(getattr(ev, "type", "")).lower():
+        if "tool" not in str(getattr(ev, "type", "")).lower():
             continue
         data = getattr(ev, "data", None)
-        name = getattr(data, "tool_name", None) or "<unknown>"
-        outcomes.append((str(name), bool(getattr(data, "success", False))))
-    return outcomes
+        call_id = getattr(data, "tool_call_id", None)
+        name = getattr(data, "tool_name", None)
+        if call_id and name:
+            names.setdefault(str(call_id), str(name))
+    return names
+
+
+def tool_outcomes() -> list[tuple[str, bool]]:
+    """tool 実行の完了 event から (tool 名, success) を拾う。
+
+    request だけの name と実際に execution まで到達した name を区別する。
+    未登録 name は execution failure になる (does not exist を 2026-11-11 実測)。
+    """
+    names = tool_names_by_call()
+    outcomes: set[tuple[str, bool]] = set()
+    for ev in raw_events:
+        etype = str(getattr(ev, "type", "")).lower()
+        if "execution_complete" not in etype and "tool.completed" not in etype:
+            continue
+        data = getattr(ev, "data", None)
+        call_id = str(getattr(data, "tool_call_id", "") or "")
+        name = getattr(data, "tool_name", None) or names.get(call_id) or "<unknown>"
+        success = getattr(data, "success", None)
+        if success is None:
+            success = getattr(data, "error", None) is None
+        outcomes.add((str(name), bool(success)))
+    return sorted(outcomes)
 
 
 def summarize(tag: str) -> None:
