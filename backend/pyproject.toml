@@ -13,6 +13,8 @@ dependencies = [
     "python-dotenv==1.2.4",
     "httpx==0.28.1",
     "pyyaml==6.0.3",
+    # AG-UI protocol (§2.1 / CopilotKit 連携): event model と SSE encoder を公式実装から使う。
+    "ag-ui-protocol==1.0.0",
 ]
 
 [project.optional-dependencies]

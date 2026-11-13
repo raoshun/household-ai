@@ -12,18 +12,24 @@ pinned image 内で実行する。expand は --env-file /dev/null を使い、ho
 の影響を排除して compose 側の既定値だけを検証する。
 
 検証 claims:
-  1. 3 service (runtime / gate / proof) で gate / proof だけ profile `checks`
-     を持ち、default up service は runtime だけ。
+  1. 5 service (runtime / gate / proof / api / ui-bridge) で gate / proof /
+     ui-bridge だけ profile `checks` を持ち、api は profile `ui`、default up
+     service は runtime だけ。
   2. 認証 env は host 補間で渡り、compose file にも展開後も literal secret
      を書かない (展開値は empty か `local-dummy` に限制)。
   3. runtime は named volume `household-data` を /app/data へ mount する。
-  4. runtime / proof に host.docker.internal:host-gateway を設定し、gate は
-     host 出向きの extra_hosts を持たない。
+  4. runtime / proof / api / ui-bridge に host.docker.internal:host-gateway を
+     設定し、gate は host 出向きの extra_hosts を持たない。
   5. gate の source mount は working tree の read-only mount である。
   6. proof の session store / runtime cache は /tmp 退避で named volume 無し。
   7. .dockerignore の .env / .env.* / data / .venv 除外と Dockerfile の COPY
      一覧から秘密 / 実行時 data の焼付けがない。
-  8. gate / proof / runtime が同一 image reference を指す。
+  8. gate / proof / runtime / api / ui-bridge が同一 image reference を指す。
+  9. ui-bridge (Phase 1 UI ブリッジ live proof) の session store / runtime cache
+     も /tmp 退避で、mount は source ro と証跡用 `/out` だけ。
+ 10. api (Phase 1 API サーバー) の published port は loopback (127.0.0.1) 限定で、
+     他の service は port を公開しない (UI frontend の Node image は compose に
+     入れない: README §6.4 / §13.4)。
 
 `--tamper <mode>` は展開値 / Dockerfile を壊した copy へ同じ検査を実行し、
 claims 検査が defect を拒否することを実証する (negative gate)。実配置不変。
@@ -46,7 +52,21 @@ DOCKERFILE_BASENAME = "backend/Dockerfile"
 DOCKERIGNORE_BASENAME = ".dockerignore"
 
 GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof")
-COMPOSE_SERVICE_NAMES: frozenset[str] = frozenset({"gate", "proof", "runtime"})
+UI_SERVICE_NAME = "api"
+UI_BRIDGE_SERVICE_NAME = "ui-bridge"
+UI_PROFILE = "ui"
+CHECKED_GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof", "ui-bridge")
+HOST_GATEWAY_SERVICE_NAMES: tuple[str, ...] = ("runtime", "proof", "api", "ui-bridge")
+COMPOSE_SERVICE_NAMES: frozenset[str] = frozenset(
+    {"gate", "proof", "runtime", UI_SERVICE_NAME, UI_BRIDGE_SERVICE_NAME}
+)
+UI_PUBLISHED_PORT = 8000
+UI_LOOPBACK_BINDS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+UI_BRIDGE_EVIDENCE_TARGET = "/out"
+UI_BRIDGE_EVIDENCE_SOURCE_SEGMENT = ".local"
+UI_BRIDGE_MOUNT_TARGETS: frozenset[str] = frozenset(
+    {"/app/backend/app", "/app/tests", UI_BRIDGE_EVIDENCE_TARGET}
+)
 CHECKS_PROFILE = "checks"
 DEFAULT_IMAGE = "household-ai-runtime-test:0.1.0"
 DATA_MOUNT_TARGET = "/app/data"
@@ -176,6 +196,26 @@ def _dockerfile_copy_sources(text: str) -> list[str]:
     return sorted(sources)
 
 
+def _published_port_strings(svc: dict[str, Any]) -> list[str]:
+    """ports を `host_ip:published->target/proto` 形へ正規化する (string / dict 両対応)。"""
+
+    entries: list[str] = []
+    for item in svc.get("ports") or []:
+        if isinstance(item, dict):
+            host_ip = str(item.get("host_ip") or "0.0.0.0")
+            published = str(item.get("published") or "")
+            target = str(item.get("target") or "")
+            protocol = str(item.get("protocol") or "tcp")
+            mode = str(item.get("mode") or "")
+            entries.append(
+                f"{host_ip}:{published or '->'}->{target}/{protocol}"
+                + (f" mode={mode}" if mode else "")
+            )
+        else:
+            entries.append(str(item))
+    return sorted(entries)
+
+
 def _baked_source_is_secret(source: str) -> bool:
     """COPY 元 (または DEST 混在 list) から秘密 / data 焼付けを検出するか。"""
 
@@ -250,6 +290,21 @@ def collect_measured(
             for key, value in sorted(_env(svc).items())
             if "RUNTIME_DIR" in key
         },
+        "published_ports": {
+            name: _published_port_strings(svc)
+            for name, svc in sorted(services.items())
+        },
+        "ui_bridge_state_dirs": {
+            key: value
+            for key, value in sorted(_env(services.get(UI_BRIDGE_SERVICE_NAME, {})).items())
+            if key in PROOF_STATE_ENV_KEYS
+        },
+        "ui_bridge_evidence_dir": _env(services.get(UI_BRIDGE_SERVICE_NAME, {})).get(
+            "UI_BRIDGE_EVIDENCE_DIR", ""
+        ),
+        "ui_bridge_command": " ".join(
+            str(part) for part in (services.get(UI_BRIDGE_SERVICE_NAME, {}).get("command") or [])
+        ),
         "gate_python_path": _env(services.get("gate", {})).get("PYTHONPATH", ""),
         "compose_credential_literals": sorted(
             LITERAL_CREDENTIAL_RE.findall(compose_text)
