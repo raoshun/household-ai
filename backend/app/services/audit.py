@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.clock import tokyo_iso
+from app.services.exceptions import (
+    InvalidRequestError,
+    TurnIdConflictError,
+    UnknownTurnError,
+)
 
 AUDIT_ACTORS = ("family", "policy", "system", "agent")
 AUDIT_KINDS = (
@@ -27,6 +32,18 @@ _KNOWN_STOP_REASONS = (
     "turn_timeout",
 )
 
+# turn の lifecycle state (§3 frame 系列と §4 busy/conflict 判定の正)。queued は
+# 受付済みで pump 未開始、started は実行中。terminal 化は complete_turn 只在。
+_ACTIVE_TURN_STATUSES = ("queued", "started")
+_TERMINAL_STATUS_BY_STOP_REASON = {
+    "aborted": "cancelled",
+    "end_turn": "completed",
+    "permission_required": "interrupted",
+    "send_failed": "failed",
+    "tool_not_executed": "failed",
+    "turn_timeout": "timed_out",
+}
+
 
 @dataclass(slots=True)
 class ConversationTurn:
@@ -46,6 +63,7 @@ class ConversationTurn:
     rules_touched: list[str] = field(default_factory=list)
     rule_references: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = "end_turn"
+    status: str = "started"
     error: dict[str, Any] | None = None
     judgment_id: str | None = None
     usage: dict[str, Any] | None = (
@@ -71,6 +89,7 @@ class ConversationTurn:
             "rules_touched": list(self.rules_touched),
             "session_id": self.session_id,
             "started_at": self.started_at,
+            "status": self.status,
             "stop_reason": self.stop_reason,
             "tool_call_refs": list(self.tool_call_refs),
             "tool_calls": dict(self.tool_calls),
@@ -124,6 +143,91 @@ class ConversationLog:
         )
         return turn
 
+    def next_turn_id(self, conversation_id: str) -> str:
+        """次の canonical turn id (`{conversation_id}:t{n}`、§4 conflict 判定用)。"""
+
+        return (
+            f"{conversation_id}:t"
+            f"{len(self._turn_ids_by_conversation.get(conversation_id, []))}"
+        )
+
+    def queue_turn(
+        self,
+        *,
+        conversation_id: str,
+        user_text: str,
+        turn_id: str | None = None,
+        session_id: str | None = None,
+    ) -> ConversationTurn:
+        """turn を queued で受付る (§4 busy 409 / turn_id 422 の判定材料)。
+
+        - 未指定なら canonical `{conversation_id}:t{n}` を採番する
+        - client 指定 id が既存 turn と衝突なら `TurnIdConflictError` (422。active
+          への再投話は呼び出し側で busy 409 に写す)
+        - canonical 規則外の採番は拒否 (400)。client 発行 id は `agui` 接頭辞のみ
+          受け付ける (§3.1 の client turnId 系列。他形式は validation 対象)
+        """
+
+        expected = self.next_turn_id(conversation_id)
+        resolved_id = turn_id or expected
+        existing = self._turns.get(resolved_id)
+        if existing is not None:
+            raise TurnIdConflictError(turn_id=resolved_id)
+        if resolved_id != expected and not resolved_id.startswith("agui"):
+            raise InvalidRequestError(
+                f"turn_id が canonical 規則 ({expected}) と異なるか不正です: "
+                f"{resolved_id}"
+            )
+        processed = (
+            self._processed_turn_by_session.get(session_id or conversation_id, 0) + 1
+        )
+        if session_id:
+            self._processed_turn_by_session[session_id] = processed
+        turn = ConversationTurn(
+            conversation_id=conversation_id,
+            processed_turn=processed,
+            session_id=session_id,
+            status="queued",
+            turn_id=resolved_id,
+            user_text=user_text,
+        )
+        self._turns[resolved_id] = turn
+        self._turn_order.append(resolved_id)
+        self._turn_ids_by_conversation.setdefault(conversation_id, []).append(
+            resolved_id
+        )
+        self._messages.setdefault(conversation_id, []).append(
+            {"content": user_text, "created_at": turn.started_at, "role": "user"}
+        )
+        return turn
+
+    def mark_started(self, turn_id: str) -> ConversationTurn:
+        """queued -> started への遷移 (実行開始)。start 済みの再呼出しは無害。"""
+
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise UnknownTurnError(turn_id=turn_id)
+        if turn.status == "queued":
+            turn.status = "started"
+            turn.started_at = tokyo_iso()
+        if turn.completed_at is not None:
+            raise TurnIdConflictError(turn_id=turn_id)
+        return turn
+
+    def active_turn(self, conversation_id: str) -> ConversationTurn | None:
+        """queued / started の未完了 turn (1 thread に最大 1 つ)。"""
+
+        for turn_id in reversed(
+            self._turn_ids_by_conversation.get(conversation_id, [])
+        ):
+            turn = self._turns[turn_id]
+            if turn.status in _ACTIVE_TURN_STATUSES and turn.completed_at is None:
+                return turn
+        return None
+
+    def is_busy(self, conversation_id: str) -> bool:
+        return self.active_turn(conversation_id) is not None
+
     def append_assistant_text(self, turn_id: str, text: str) -> None:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -166,6 +270,7 @@ class ConversationLog:
             msg = f"未知の stop_reason: {stop_reason}"
             raise ValueError(msg)
         turn.stop_reason = stop_reason
+        turn.status = _TERMINAL_STATUS_BY_STOP_REASON.get(stop_reason, "completed")
         turn.error = error
         turn.judgment_id = judgment_id
         turn.usage = usage
