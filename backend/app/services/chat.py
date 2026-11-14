@@ -22,6 +22,16 @@ from app.agent.permissions import PermissionBroker
 from app.clock import tokyo_iso
 from app.config import Settings, load_settings
 from app.services.audit import AuditTrail, ConversationLog, JudgmentStore
+from app.services.exceptions import (
+    ChatServiceError,
+    ConcurrencyLimitError,
+    ForkNotFoundError,
+    ThreadClosedError,
+    UnknownApprovalError,
+    UnknownResolverError,
+    UnknownThreadError,
+    UnknownTurnError,
+)
 from app.services.hub import ApprovalBroadcaster, MonitorHub
 from app.services.rules import Rule, RuleStore
 from app.services.session_events import (
@@ -69,35 +79,21 @@ RESOLVERS: frozenset[str] = frozenset(
 )
 
 
-class ChatServiceError(RuntimeError):
-    """chat service 系の base error（HTTP layer で code へ変換する）."""
-
-
-class UnknownThreadError(ChatServiceError):
-    pass
-
-
-class ThreadClosedError(ChatServiceError):
-    pass
-
-
-class UnknownApprovalError(ChatServiceError):
-    pass
-
-
-class ConcurrencyLimitError(ChatServiceError):
-    pass
-
-
-class ForkNotFoundError(ChatServiceError):
-    pass
-
-class UnknownTurnError(ChatServiceError):
-    """thread に存在しない turn id を指定した。"""
-
-
-class UnknownResolverError(ChatServiceError):
-    """resolver し得ない approval (解決済み/取り消し済み) を解決しようとした。"""
+# chat service 系の例外は app.services.exceptions が canonical home (contract §4 taxonomy)。
+# chat.py は existing import 経路との互換のため同名を re-export する。
+__all__ = [
+    "ChatService",
+    "ChatServiceError",
+    "ConcurrencyLimitError",
+    "ForkNotFoundError",
+    "MonitorEventType",
+    "Thread",
+    "ThreadClosedError",
+    "UnknownApprovalError",
+    "UnknownResolverError",
+    "UnknownThreadError",
+    "UnknownTurnError",
+]
 
 
 @dataclass(slots=True)
