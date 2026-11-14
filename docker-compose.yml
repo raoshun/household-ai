@@ -1,7 +1,7 @@
 # Phase 0 検証用の Docker 設定 (§15 Phase 0 完了条件の "lint と unit test は
-# Docker 環境内で実行する" に対応)。API サーバー (backend/app/main.py) は Phase 1 のため、
-# ここでは import 確認・lint・unit test と Custom Tool の live proof を Docker で回す。
-#
+# Docker 環境内で実行する" に対応)。import 確認・lint・unit test と Custom Tool の live
+# proof を Docker で回す。UI ブリッジの API サーバー (backend/app/main.py) は profiles: ui の
+# api サービスで起動する (make phase0-ui-up / make ui-up)。
 # 実行例 (make 経由を推奨. 生の docker compose でも同じ):
 #   make gate                        # import + lint + unit test (既定の検証コマンド)
 #   make up                          # 既定の up: gate / proof は起動しない
@@ -33,7 +33,7 @@ services:
       SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-900}
     extra_hosts:
       - host.docker.internal:host-gateway
-    # Phase 1 で FastAPI 起動に置き換える。Phase 0 は import 確認後に idle で待つ。
+    # UI ブリッジの FastAPI 起動は profiles: ui の api サービスで行う。Phase 0 gate では idle で待つ。
     command:
       - sh
       - -c
