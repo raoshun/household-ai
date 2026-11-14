@@ -41,7 +41,11 @@ from app.agent.provider import (
     ProviderError,
     ProviderUnavailableError,
 )
-from app.agent.runtime import AgentRuntimeError, SessionNotFoundError
+from app.agent.runtime import (
+    AgentRuntimeError,
+    AgentSessionBusyError,
+    SessionNotFoundError,
+)
 from app.services.rules import RuleValidationError
 
 __all__ = [
@@ -505,6 +509,11 @@ class ProblemEmitter:
         )
         reg(
             TurnInProgressError,
+            ProblemRule(409, "unknown_error", "unknown_error.turn_in_progress"),
+        )
+        # provider がセッション busy で interrupt を拒否した場合 (§5 409 行)
+        reg(
+            AgentSessionBusyError,
             ProblemRule(409, "unknown_error", "unknown_error.turn_in_progress"),
         )
         reg(
