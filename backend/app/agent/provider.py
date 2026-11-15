@@ -14,6 +14,12 @@
 - `SessionEvent` の `type` (列挙, `.value` が wire 名) / `data` / `raw_type` / `id`
 - 許可判断の戻り値は `PermissionDecisionApproveOnce()` /
   `PermissionDecisionReject(feedback=...)` (`PermissionRequestResult` は 1.4.0 由来)
+- `permission.requested` の custom tool 要求 payload は installed SDK 1.0.29 の
+  introspection で実測した `PermissionRequestCustomTool` フィールドを使う:
+  `kind` / `tool_description` / `tool_name` / `args` / `tool_call_id` /
+  `managed_approval_required` / `skip_permission` (2 番目の `PermissionInvocation` は
+  TypedDict で `session_id` / `managed_settings_enabled` /
+  `assisted_approval_assessment` / `prompt_request` だけを持つ)
 - `session.abort()` / `session.disconnect()` (1.0.29 の `CopilotSession` に
   `close()` は無い) / `session.send()` / `session.session_id`
 - 禁止既定は `ToolSet().add_custom("*")` (`add_builtin("*")` を入れない) で実証済み:
@@ -48,6 +54,11 @@ from .events import (
     TurnResult,
     history_tail_start,
     wire_type,
+)
+from .permissions import (
+    InteractivePermissionHook,
+    PermissionPrompt,
+    new_prompt_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -454,11 +465,23 @@ class CopilotAgentProvider:
         settings: Settings,
         *,
         sdk_client_factory: Any | None = None,
+        permission_hook: InteractivePermissionHook | None = None,
     ) -> None:
+        """`permission_hook` は §2.5.4 の PermissionHandler port (apps 側実装)。
+
+        None の場合の挙動は従来どおり (registered 即可承認 / deny-by-default)。
+        hook を渡すと `approval_mode="ask"` の tool だけ apps 側の判断まで待機し、
+        `auto` は policy ですでに承認済みなので待機しない。
+        """
         self._settings = settings
         self._client_factory = sdk_client_factory
+        self._permission_hook = permission_hook
         self._client: Any | None = None
         self._sessions: dict[str, CopilotAgentSession] = {}
+
+    @property
+    def permission_hook(self) -> InteractivePermissionHook | None:
+        return self._permission_hook
 
     # ------------------------------------------------------------------
     # ライフサイクル
@@ -965,25 +988,57 @@ class CopilotAgentSession:
         SDK は managed settings と無関係にこの handler を呼ぶ (1.0.29 では
         managed approval を使わない構成)。invocation は SDK が必ず渡す 2 番目の
         引数で、拒否時の feedback 送信には使わない。
+
+        追加した §2.5.4 の hook 経路: registered でも `approval_mode="ask"` かつ
+        provider へ permission_hook が設定されていれば、apps 側 (family human) の
+        判断まで await する。`auto` は policy で承認済みとみなし待機しない。
+        hook 無い場合の挙動は従来の deny-by-default のまま。
         """
         tool_name = str(
             getattr(request, "tool_name", None)
             or getattr(invocation, "tool_name", None)
             or ""
         )
-        if tool_name and tool_name in self._tool_names:
-            # 承認も deny と同じ audit log を残す (Phase 1 の PermissionHandler port が
-            # 要求する監査証跡)
+        binding = next((b for b in self._tool_bindings if b.name == tool_name), None)
+        hook = self._provider.permission_hook if self._provider is not None else None
+        if binding is not None and hook is not None and not binding.auto_approved:
+            outcome = await hook(
+                PermissionPrompt(
+                    prompt_id=new_prompt_id(),
+                    session_id=self._session_id or "<未作成>",
+                    tool_name=tool_name,
+                    arguments=_permission_arguments(request),
+                    tool_call_id=_permission_tool_call_id(request),
+                )
+            )
+            if not outcome.approved:
+                logger.info(
+                    "permission_denied session=%s tool=%s reason=human-decision",
+                    self._session_id,
+                    tool_name or "<unnamed>",
+                )
+                return PermissionDecisionReject(
+                    feedback=outcome.feedback or _DENY_MESSAGE
+                )
             logger.info(
-                "permission_approved session=%s tool=%s", self._session_id, tool_name
+                "permission_approved session=%s tool=%s source=human",
+                self._session_id,
+                tool_name,
             )
             return PermissionDecisionApproveOnce()
+        if binding is None:
+            logger.info(
+                "permission_denied session=%s tool=%s reason=not-registered",
+                self._session_id,
+                tool_name or "<unnamed>",
+            )
+            return PermissionDecisionReject(feedback=_DENY_MESSAGE)
+        # 承認も deny と同じ audit log を残す (Phase 1 の PermissionHandler port が
+        # 要求する監査証跡)
         logger.info(
-            "permission_denied session=%s tool=%s reason=not-registered",
-            self._session_id,
-            tool_name or "<unnamed>",
+            "permission_approved session=%s tool=%s", self._session_id, tool_name
         )
-        return PermissionDecisionReject(feedback=_DENY_MESSAGE)
+        return PermissionDecisionApproveOnce()
 
     def _require_open(self) -> Any:
         if self._sdk_session is None:
@@ -999,6 +1054,71 @@ class CopilotAgentSession:
 def _absolute_path(path: Path | str) -> str:
     """Settings の相対 path を SDK が要求する絶対 path へ変換する (§7.2)。"""
     return str(Path(path).expanduser().resolve())
+
+
+_ARGUMENT_FIELDS: tuple[str, ...] = (
+    "args",
+    "arguments",
+    "tool_input",
+    "input",
+    "data",
+)
+"""permission request から tool 引数を読む候補 (§7.8 field name policy)。
+
+1.0.29 の custom tool 要求は `PermissionRequestCustomTool` (dataclass) で
+`tool_name` / `args` / `tool_call_id` を持つ (installed SDK の introspection で実測)。
+tests/unit/fake.py は 1.0.29 相当として `tool_input` を使うため両対応にする。
+"""
+
+
+def _permission_arguments(request: Any) -> dict[str, Any]:
+    """permission 要求から apps 側 prompt へ渡す tool 引数を抽出する。
+
+    1.0.29 は `args` を dict で送るが、JSON 文字列で送る経路もあり得る。grant
+    突合 (§12.4 tool 実行時の再検証) は tool handler が受け取る dict と比較するため、
+    ここで JSON object 文字列を dict へ正規化しておく (判定ロジックは足さない)。
+    """
+
+    containers = [request]
+    inner = getattr(request, "request", None)
+    if inner is not None:
+        containers.append(inner)
+    for source in containers:
+        mapping = source if isinstance(source, Mapping) else None
+        for field_name in _ARGUMENT_FIELDS:
+            value = (
+                mapping.get(field_name)
+                if mapping is not None
+                else getattr(source, field_name, None)
+            )
+            if isinstance(value, Mapping) and value:
+                return dict(value)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    return {"arguments": text}
+                if isinstance(parsed, Mapping) and parsed:
+                    return dict(parsed)
+                return {"arguments": parsed}
+    return {}
+
+
+def _permission_tool_call_id(request: Any) -> str | None:
+    """SDK の permission 要求から tool call 識別子を取り出す (監査 §11 用)。"""
+
+    for source in (request, getattr(request, "request", None)):
+        if source is None:
+            continue
+        value = (
+            source.get("tool_call_id")
+            if isinstance(source, Mapping)
+            else getattr(source, "tool_call_id", None)
+        )
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _policy_wildcard_enabled() -> bool:

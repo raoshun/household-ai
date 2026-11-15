@@ -65,21 +65,29 @@ exit code: 0 (OK)
 
 ## make prove-compose-claims-tamper
 
+収集時刻: 2026-11-15T06:48:05Z UTC (6 とおりへ拡張後に再収集。host path は `<repo>` へ mask 済み)
+
 ```shell
 $ make prove-compose-claims-tamper
 
 [compose-claims-tamper] literal-credential
 [compose-claims] tamper=literal-credential guard_detected=True claim=credentials_not_baked
-  reject_reason: ComposeClaimsError: credentials_not_baked 不合格: compose literals=["      AI_API_KEY: sk-FAKELITERALVALUE123", "      AI_API_KEY: sk-FAKELITERALVALUE123"] expanded={"gate": {"AI_API_KEY": {"present": false, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "proof": {"AI_API_KEY": {"present": true, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "runtime": {"AI_API_KEY": {"present": true, "value_class": "literal_secret"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}}
+  reject_reason: ComposeClaimsError: credentials_not_baked 不合格: compose literals=["AI_API_KEY: sk-FAKELITERALVALUE123", "AI_API_KEY: sk-FAKELITERALVALUE123", "AI_API_KEY: sk-FAKELITERALVALUE123", "AI_API_KEY: sk-FAKELITERALVALUE123"] expanded={"api": {"AI_API_KEY": {"present": true, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "gate": {"AI_API_KEY": {"present": false, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "proof": {"AI_API_KEY": {"present": true, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "runtime": {"AI_API_KEY": {"present": true, "value_class": "literal_secret"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}, "ui-bridge": {"AI_API_KEY": {"present": true, "value_class": "placeholder"}, "COPILOT_GITHUB_TOKEN": {"present": true, "value_class": "placeholder"}, "GH_TOKEN": {"present": false, "value_class": "placeholder"}, "GITHUB_TOKEN": {"present": false, "value_class": "placeholder"}}}
 [compose-claims-tamper] bind-data-dir
 [compose-claims] tamper=bind-data-dir guard_detected=True claim=data_volume_mount
-  reject_reason: ComposeClaimsError: data_volume_mount 不合格: named_volumes=["household-data"] runtime=["./data:/app/data:rw"]
+  reject_reason: ComposeClaimsError: data_volume_mount 不合格: named_volumes=["household-data"] runtime=["./data:/app/data:rw"] api=["household-data:/app/data:rw"]
 [compose-claims-tamper] unprofiled-gate
 [compose-claims] tamper=unprofiled-gate guard_detected=True claim=phase0_compose_service_set
-  reject_reason: ComposeClaimsError: phase0_compose_service_set 不合格: services=["gate", "proof", "runtime"] default_up=["gate", "runtime"] profiles={"gate": [], "proof": ["checks"], "runtime": []}
+  reject_reason: ComposeClaimsError: phase0_compose_service_set 不合格: services=["api", "gate", "proof", "runtime", "ui-bridge"] default_up=["gate", "runtime"] profiles={"api": ["ui"], "gate": [], "proof": ["checks"], "runtime": [], "ui-bridge": ["checks"]}
 [compose-claims-tamper] baked-secret-in-image
 [compose-claims] tamper=baked-secret-in-image guard_detected=True claim=secrets_and_data_excluded_from_image
   reject_reason: ComposeClaimsError: secrets_and_data_excluded_from_image 不合格: excluded=["*.py[oc]", "*.zcode.*", ".env", ".env.*", ".git", ".github", ".pytest_cache/", ".ruff_cache/", ".spike/", ".venv*/", ".venv/", "__pycache__/", "copilot-runtime/", "data/", "frontmatter.json", "installed-plugins/", "logs/", "session-state/"] copy_sources=["./", "./README.md", "./app", ".env", "/app/.env", "/app/baked-data", "/app/docs/pinned-runtime-versions.json", "/app/skills", "/app/tests", "backend/README.md", "backend/app", "backend/pyproject.toml", "backend/uv.lock", "data", "docs/pinned-runtime-versions.json", "skills", "tests"]
+[compose-claims-tamper] ui-bridge-state-mounted
+[compose-claims] tamper=ui-bridge-state-mounted guard_detected=True claim=ui_bridge_state_and_mounts
+  reject_reason: ComposeClaimsError: ui_bridge_state_and_mounts 不合格: state={"COPILOT_RUNTIME_DIR": "/tmp/ui-proof-runtime", "DATA_DIR": "/tmp/ui-proof-data"} mounts={"/app/backend/app": {"source": "<repo>/backend/app", "mode": "ro", "named": false}, "/app/tests": {"source": "<repo>/tests", "mode": "ro", "named": false}, "/out": {"source": "<repo>/.local/ui/out", "mode": "rw", "named": false}, "/app/data": {"source": "./data/ui-bridge-state", "mode": "rw", "named": false}} command=timeout 1200 sh -c .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short --import-mode=importlib -rf
+[compose-claims-tamper] ui-port-wildcard
+[compose-claims] tamper=ui-port-wildcard guard_detected=True claim=ui_published_ports_loopback_only
+  reject_reason: ComposeClaimsError: ui_published_ports_loopback_only 不合格: api ports=["0.0.0.0:8000->8000/tcp mode=ingress"] all_ports={"api": ["0.0.0.0:8000->8000/tcp mode=ingress"], "gate": [], "proof": [], "runtime": [], "ui-bridge": []}
 negative gate OK: defect 検出。evidence: docs/evidence/compose-claims-tamper-*.json
 
 exit code: 0 (OK)

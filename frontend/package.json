@@ -1,0 +1,38 @@
+{
+  "name": "household-ai-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ag-ui/client": "1.0.4",
+    "@ag-ui/core": "1.0.4",
+    "@copilotkit/react-core": "1.87.0",
+    "@copilotkit/react-ui": "1.87.0",
+    "@copilotkit/runtime": "1.87.0",
+    "next": "15.5.29",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "jsdom": "26.1.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  },
+  "overrides": {
+    "@ag-ui/client": "1.0.4",
+    "@ag-ui/core": "1.0.4",
+    "@ag-ui/encoder": "1.0.4"
+  }
+}

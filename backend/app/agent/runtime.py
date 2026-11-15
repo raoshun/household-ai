@@ -31,6 +31,7 @@ __all__ = [
     "AgentHealth",
     "AgentRuntime",
     "AgentRuntimeError",
+    "AgentSessionBusyError",
     "SessionNotFoundError",
 ]
 
@@ -41,6 +42,14 @@ class AgentRuntimeError(RuntimeError):
 
 class SessionNotFoundError(AgentRuntimeError):
     """登録されていないセッションが指定された。"""
+
+
+class AgentSessionBusyError(AgentRuntimeError):
+    """provider がセッションの混雑 (実行中ターンあり) を理由に要求を
+    拒否した (§5 409 turn_in_progress 行)。"""
+
+
+_BUSY_MARKERS = ("busy", "ビジー", "混雑")
 
 
 @dataclass(slots=True, frozen=True)
@@ -193,7 +202,39 @@ class AgentRuntime:
         """実行中のターンを中断する (§4 abort / §7.2 interrupt)。"""
         self._require_started()
         handle = self._require_handle(session_id)
-        await handle.abort()
+        await self._translate_session_failure(handle.abort(), session_id)
+
+    async def interrupt_session(self, session_id: str) -> None:
+        """実行中ターンへの割り込みを provider に要求する (§5 interrupt)。
+
+        SSE 接続のクローズとは独立した操作で、明示的な cancel/interrupt 経路から
+        呼ぶ (§6.3 クライアント切断は cancel とみなさない)。provider がセッション
+        の busy を理由に拒否した場合は `AgentSessionBusyError` (API 層で 409
+        `unknown_error.turn_in_progress` へ対応) を送出する。
+        """
+        self._require_started()
+        self._require_handle(session_id)
+        await self._translate_session_failure(
+            self._provider.interrupt_session(session_id), session_id
+        )
+
+    async def _translate_session_failure(
+        self,
+        awaitable: Any,
+        session_id: str,
+    ) -> Any:
+        try:
+            result = await awaitable
+        except AgentSessionError as exc:
+            detail = str(exc)
+            if any(marker in detail.lower() for marker in _BUSY_MARKERS):
+                raise AgentSessionBusyError(f"{session_id}: busy") from exc
+            # busy 以外の session 失敗は §4 の 502 provider_session_error 行で
+            # API 層へ対応するため元例外のまま送出する
+            raise
+        # session_id は登録側でも検査済み (型-check 用の参照)
+        _ = session_id
+        return result
 
     # ------------------------------------------------------------------
     # 疎通確認 (§7.2 health_check / list_models)

@@ -11,19 +11,26 @@ gate 用 image に docker CLI が無いため、展開 JSON 生成は host の
 pinned image 内で実行する。expand は --env-file /dev/null を使い、host env
 の影響を排除して compose 側の既定値だけを検証する。
 
-検証 claims:
-  1. 3 service (runtime / gate / proof) で gate / proof だけ profile `checks`
-     を持ち、default up service は runtime だけ。
-  2. 認証 env は host 補間で渡り、compose file にも展開後も literal secret
+検証 claims (code の検査順 = README §13 の claims 番号):
+  1. 5 service (runtime / gate / proof / api / ui-bridge) で gate / proof /
+     ui-bridge だけ profile `checks` を持ち、api は profile `ui`、default up
+     service は runtime だけ。
+  2. gate / proof / ui-bridge / runtime / api が同一 image reference を指す。
+  3. 認証 env は host 補間で渡り、compose file にも展開後も literal secret
      を書かない (展開値は empty か `local-dummy` に限制)。
-  3. runtime は named volume `household-data` を /app/data へ mount する。
-  4. runtime / proof に host.docker.internal:host-gateway を設定し、gate は
-     host 出向きの extra_hosts を持たない。
-  5. gate の source mount は working tree の read-only mount である。
-  6. proof の session store / runtime cache は /tmp 退避で named volume 無し。
-  7. .dockerignore の .env / .env.* / data / .venv 除外と Dockerfile の COPY
+  4. runtime / api の data mount は named volume `household-data` を /app/data
+     へ mount する (host dir bind mount を混ぜない)。
+  5. runtime / proof / api / ui-bridge に host.docker.internal:host-gateway を
+     設定し、gate は host 出向きの extra_hosts を持たない。
+  6. gate の source mount は working tree の read-only mount である。
+  7. proof の session store / runtime cache は /tmp 退避で named volume 無し。
+  8. .dockerignore の .env / .env.* / data / .venv 除外と Dockerfile の COPY
      一覧から秘密 / 実行時 data の焼付けがない。
-  8. gate / proof / runtime が同一 image reference を指す。
+  9. ui-bridge (UI ブリッジ live proof) の session store / runtime cache も
+     /tmp 退避で、mount は working tree ro 2 か所と証跡用 `/out` だけ。
+ 10. api (UI 向け API サーバー) の published port は loopback (127.0.0.1) 限定で、
+     他の service は port を公開しない (UI frontend の Node image は compose に
+     入れない: README §6.4 / §13.4)。
 
 `--tamper <mode>` は展開値 / Dockerfile を壊した copy へ同じ検査を実行し、
 claims 検査が defect を拒否することを実証する (negative gate)。実配置不変。
@@ -46,7 +53,22 @@ DOCKERFILE_BASENAME = "backend/Dockerfile"
 DOCKERIGNORE_BASENAME = ".dockerignore"
 
 GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof")
-COMPOSE_SERVICE_NAMES: frozenset[str] = frozenset({"gate", "proof", "runtime"})
+RUNTIME_SERVICE_NAME = "runtime"
+UI_SERVICE_NAME = "api"
+UI_BRIDGE_SERVICE_NAME = "ui-bridge"
+UI_PROFILE = "ui"
+CHECKED_GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof", "ui-bridge")
+HOST_GATEWAY_SERVICE_NAMES: tuple[str, ...] = ("runtime", "proof", "api", "ui-bridge")
+COMPOSE_SERVICE_NAMES: frozenset[str] = frozenset(
+    {"gate", "proof", "runtime", UI_SERVICE_NAME, UI_BRIDGE_SERVICE_NAME}
+)
+UI_PUBLISHED_PORT = 8000
+UI_LOOPBACK_BINDS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+UI_BRIDGE_EVIDENCE_TARGET = "/out"
+UI_BRIDGE_EVIDENCE_SOURCE_SEGMENT = ".local/ui/out"
+UI_BRIDGE_MOUNT_TARGETS: frozenset[str] = frozenset(
+    {"/app/backend/app", "/app/tests", UI_BRIDGE_EVIDENCE_TARGET}
+)
 CHECKS_PROFILE = "checks"
 DEFAULT_IMAGE = "household-ai-runtime-test:0.1.0"
 DATA_MOUNT_TARGET = "/app/data"
@@ -64,16 +86,30 @@ CREDENTIAL_ENV_KEYS: tuple[str, ...] = (
 NON_SECRET_PLACEHOLDER_VALUES: frozenset[str] = frozenset({"", "local-dummy"})
 IMAGE_EXCLUDED_CONTEXT_NAMES: tuple[str, ...] = (".env", ".env.*", "data/", ".venv/")
 
+# compose text の env 行で credential らしい name (API_KEY 等) に literal 値が直接
+# 書かれている場合を検出する。補間参照 (${VAR} / ${VAR:-dummy}) は除外し、quoted 値も
+# 捕捉する。name が credential 由来でも value が数値 / boolean / URL / path / 補間参照
+# なら credential literal ではない (例: CONTEXT_TOKEN_WARNING_RATIO: "0.8")。
 LITERAL_CREDENTIAL_RE = re.compile(
     r"^[ \t]*[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*"
-    r"[ \t]*:[ \t]*(?!\$\{)[^\s}#]\S*",
+    r"[ \t]*:[ \t]*(?!\$\{)(?P<value>[^\s}#]\S*)",
     re.MULTILINE,
+)
+NON_CREDENTIAL_LITERAL_RE = re.compile(
+    r"(?:[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+    r"|true|false|null|none"
+    r"|[a-z][a-z0-9+.-]*://\S*"
+    r"|/\S*"
+    r"|.*?\$\{.*)",
+    re.IGNORECASE,
 )
 TAMPER_MODES: tuple[str, ...] = (
     "literal-credential",
     "bind-data-dir",
     "unprofiled-gate",
     "baked-secret-in-image",
+    "ui-bridge-state-mounted",
+    "ui-port-wildcard",
 )
 
 
@@ -176,6 +212,51 @@ def _dockerfile_copy_sources(text: str) -> list[str]:
     return sorted(sources)
 
 
+def _published_port_strings(svc: dict[str, Any]) -> list[str]:
+    """ports を `host_ip:published->target/proto` 形へ正規化する。
+
+    string / dict 両対応。
+    """
+
+    entries: list[str] = []
+    for item in svc.get("ports") or []:
+        if isinstance(item, dict):
+            host_ip = str(item.get("host_ip") or "0.0.0.0")
+            published = str(item.get("published") or "")
+            target = str(item.get("target") or "")
+            protocol = str(item.get("protocol") or "tcp")
+            mode = str(item.get("mode") or "")
+            entries.append(
+                f"{host_ip}:{published or '->'}->{target}/{protocol}"
+                + (f" mode={mode}" if mode else "")
+            )
+        else:
+            entries.append(str(item))
+    return sorted(entries)
+
+
+def _is_credential_literal(match: re.Match[str]) -> bool:
+    """LITERAL_CREDENTIAL_RE の match が実際に credential literal 値か。"""
+
+    value = (match.group("value") or "").strip("\"'")
+    if not value:
+        return False
+    return NON_CREDENTIAL_LITERAL_RE.fullmatch(value) is None
+
+
+def _credential_compose_literals(compose_text: str) -> list[str]:
+    """compose text から credential literal として扱われる行を列挙する。"""
+
+    return sorted(
+        line.strip()
+        for line in (
+            match.group(0)
+            for match in LITERAL_CREDENTIAL_RE.finditer(compose_text)
+            if _is_credential_literal(match)
+        )
+    )
+
+
 def _baked_source_is_secret(source: str) -> bool:
     """COPY 元 (または DEST 混在 list) から秘密 / data 焼付けを検出するか。"""
 
@@ -214,12 +295,14 @@ def collect_measured(
             name: _volume_strings(svc) for name, svc in sorted(services.items())
         },
         "named_volumes": named_volumes,
-        "named_volume_mounts": sorted(
-            f"{item.get('source')}:{item.get('target')}"
+        "named_volume_mounts": {
+            name: sorted(
+                f"{item.get('source')}:{item.get('target')}"
+                for item in _volumes(svc)
+                if str(item.get("source", "")) in named_volumes
+            )
             for name, svc in sorted(services.items())
-            for item in _volumes(svc)
-            if str(item.get("source", "")) in named_volumes
-        ),
+        },
         "extra_hosts": {
             name: sorted(
                 str(item).replace(":", "=", 1)
@@ -250,10 +333,33 @@ def collect_measured(
             for key, value in sorted(_env(svc).items())
             if "RUNTIME_DIR" in key
         },
-        "gate_python_path": _env(services.get("gate", {})).get("PYTHONPATH", ""),
-        "compose_credential_literals": sorted(
-            LITERAL_CREDENTIAL_RE.findall(compose_text)
+        "ui_bridge_mounts": {
+            str(item.get("target", "")): {
+                "source": str(item.get("source", "")),
+                "mode": _volume_mode(item),
+                "named": str(item.get("source", "")) in named_volumes,
+            }
+            for item in _volumes(services.get(UI_BRIDGE_SERVICE_NAME, {}))
+        },
+        "published_ports": {
+            name: _published_port_strings(svc) for name, svc in sorted(services.items())
+        },
+        "ui_bridge_state_dirs": {
+            key: value
+            for key, value in sorted(
+                _env(services.get(UI_BRIDGE_SERVICE_NAME, {})).items()
+            )
+            if key in PROOF_STATE_ENV_KEYS
+        },
+        "ui_bridge_evidence_dir": _env(services.get(UI_BRIDGE_SERVICE_NAME, {})).get(
+            "UI_BRIDGE_EVIDENCE_DIR", ""
         ),
+        "ui_bridge_command": " ".join(
+            str(part)
+            for part in (services.get(UI_BRIDGE_SERVICE_NAME, {}).get("command") or [])
+        ),
+        "gate_python_path": _env(services.get("gate", {})).get("PYTHONPATH", ""),
+        "compose_credential_literals": _credential_compose_literals(compose_text),
         "dockerfile_copy_sources": _dockerfile_copy_sources(dockerfile_text),
         "dockerignore_excluded": _dockerignore_names(dockerignore_text),
     }
@@ -272,11 +378,12 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
     check(
         "phase0_compose_service_set",
         set(measured["services"]) == COMPOSE_SERVICE_NAMES
-        and measured["default_up_services"] == ["runtime"]
+        and measured["default_up_services"] == [RUNTIME_SERVICE_NAME]
         and all(
             measured["profiled_services"].get(name) == [CHECKS_PROFILE]
-            for name in GATE_SERVICE_NAMES
-        ),
+            for name in CHECKED_GATE_SERVICE_NAMES
+        )
+        and measured["profiled_services"].get(UI_SERVICE_NAME) == [UI_PROFILE],
         "services="
         + json.dumps(measured["services"], ensure_ascii=False)
         + " default_up="
@@ -302,7 +409,8 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
         + " expanded="
         + json.dumps(measured["credential_env"], ensure_ascii=False),
     )
-    runtime_volumes = measured["service_volumes"].get("runtime", [])
+    runtime_volumes = measured["service_volumes"].get(RUNTIME_SERVICE_NAME, [])
+    ui_volumes = measured["service_volumes"].get(UI_SERVICE_NAME, [])
     check(
         "data_volume_mount",
         NAMED_DATA_VOLUME in measured["named_volumes"]
@@ -310,20 +418,28 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
             f"{NAMED_DATA_VOLUME}:{DATA_MOUNT_TARGET}:" in entry
             for entry in runtime_volumes
         )
+        # datavolume への mount は named volume だけ (host dir bind mount を混ぜない)
         and not any(
             entry.startswith("./") or entry.startswith("/") for entry in runtime_volumes
+        )
+        and not any(
+            entry.startswith("./") or entry.startswith("/") for entry in ui_volumes
         ),
         "named_volumes="
         + json.dumps(measured["named_volumes"], ensure_ascii=False)
         + " runtime="
-        + json.dumps(runtime_volumes, ensure_ascii=False),
+        + json.dumps(runtime_volumes, ensure_ascii=False)
+        + f" {UI_SERVICE_NAME}="
+        + json.dumps(ui_volumes, ensure_ascii=False),
     )
     check(
         "host_ollama_gateway",
         all(
             HOST_GATEWAY in measured["extra_hosts"].get(name, [])
-            for name in ("runtime", "proof")
-        ),
+            for name in HOST_GATEWAY_SERVICE_NAMES
+        )
+        # gate は host へ outbound な extra_hosts を持たない
+        and not measured["extra_hosts"].get("gate"),
         json.dumps(measured["extra_hosts"], ensure_ascii=False),
     )
     gate_volumes = measured["service_volumes"].get("gate", [])
@@ -369,6 +485,56 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
         + " copy_sources="
         + json.dumps(measured["dockerfile_copy_sources"], ensure_ascii=False),
     )
+    ui_bridge_mounts = measured["ui_bridge_mounts"]
+    ui_bridge_state = measured["ui_bridge_state_dirs"]
+    check(
+        "ui_bridge_state_and_mounts",
+        all(
+            key in ui_bridge_state and ui_bridge_state[key].startswith(PROOF_TMP_PREFIX)
+            for key in PROOF_STATE_ENV_KEYS
+        )
+        # mount は working tree ro 2 か所 + 証跡 /out (host mount rw) だけ
+        and sorted(ui_bridge_mounts) == sorted(UI_BRIDGE_MOUNT_TARGETS)
+        and all(
+            ui_bridge_mounts.get(target, {}).get("mode") == "ro"
+            for target in GATE_MOUNT_TARGETS
+        )
+        and ui_bridge_mounts.get(UI_BRIDGE_EVIDENCE_TARGET, {}).get("mode") == "rw"
+        and UI_BRIDGE_EVIDENCE_SOURCE_SEGMENT
+        in ui_bridge_mounts.get(UI_BRIDGE_EVIDENCE_TARGET, {}).get("source", "")
+        and not any(mount["named"] for mount in ui_bridge_mounts.values())
+        and "tests/live" in measured["ui_bridge_command"],
+        "state="
+        + json.dumps(ui_bridge_state, ensure_ascii=False)
+        + " mounts="
+        + json.dumps(ui_bridge_mounts, ensure_ascii=False)
+        + " command="
+        + measured["ui_bridge_command"],
+    )
+    ui_ports = measured["published_ports"].get(UI_SERVICE_NAME, [])
+    check(
+        "ui_published_ports_loopback_only",
+        bool(ui_ports)
+        and all(
+            any(entry.startswith(f"{bind}:") for bind in UI_LOOPBACK_BINDS)
+            and f"->{UI_PUBLISHED_PORT}/" in entry
+            for entry in ui_ports
+        )
+        # api 以外の service は host 側へ published port を公開しない
+        and not any(
+            measured["published_ports"].get(name)
+            for name in (
+                RUNTIME_SERVICE_NAME,
+                "gate",
+                "proof",
+                UI_BRIDGE_SERVICE_NAME,
+            )
+        ),
+        f"{UI_SERVICE_NAME} ports="
+        + json.dumps(ui_ports, ensure_ascii=False)
+        + " all_ports="
+        + json.dumps(measured["published_ports"], ensure_ascii=False),
+    )
     return results
 
 
@@ -383,6 +549,10 @@ def load_compose_config(repo_root: Path, config_json: Path | None) -> dict[str, 
             COMPOSE_BASENAME,
             "--profile",
             CHECKS_PROFILE,
+            "--profile",
+            UI_PROFILE,
+            "--env-file",
+            "/dev/null",
             "config",
             "--format",
             "json",
@@ -426,6 +596,21 @@ def tamper_config(config: dict[str, Any], mode: str) -> tuple[dict[str, Any], st
         marker = "gate profiles=[]"
     elif mode == "baked-secret-in-image":
         marker = "Dockerfile COPY data/ (dockerfile_text tamper)"
+    elif mode == "ui-bridge-state-mounted":
+        services[UI_BRIDGE_SERVICE_NAME].setdefault("volumes", []).append(
+            {
+                "type": "bind",
+                "source": "./data/ui-bridge-state",
+                "target": DATA_MOUNT_TARGET,
+                "bind": {},
+            }
+        )
+        marker = f"ui-bridge mount ./data/ui-bridge-state:{DATA_MOUNT_TARGET}"
+    elif mode == "ui-port-wildcard":
+        for port in services[UI_SERVICE_NAME].get("ports") or []:
+            if isinstance(port, dict):
+                port.pop("host_ip", None)
+        marker = f"{UI_SERVICE_NAME} published port から host_ip 削除 (0.0.0.0 扱い)"
     else:
         raise ComposeClaimsError(f"未知 tamper mode: {mode}")
     return tampered, marker
@@ -453,6 +638,8 @@ _TAMPER_CLAIMS: dict[str, str] = {
     "bind-data-dir": "data_volume_mount",
     "unprofiled-gate": "phase0_compose_service_set",
     "baked-secret-in-image": "secrets_and_data_excluded_from_image",
+    "ui-bridge-state-mounted": "ui_bridge_state_and_mounts",
+    "ui-port-wildcard": "ui_published_ports_loopback_only",
 }
 
 

@@ -1,0 +1,9 @@
+{
+  "gate": "compose-claims-tamper",
+  "tamper_mode": "ui-port-wildcard",
+  "tamper_marker": "api published port から host_ip 削除 (0.0.0.0 扱い)",
+  "target_claim": "ui_published_ports_loopback_only",
+  "reject_reason": "ComposeClaimsError: ui_published_ports_loopback_only 不合格: api ports=[\"0.0.0.0:8000->8000/tcp mode=ingress\"] all_ports={\"api\": [\"0.0.0.0:8000->8000/tcp mode=ingress\"], \"gate\": [], \"proof\": [], \"runtime\": [], \"ui-bridge\": []}",
+  "guard_detected": true,
+  "host_path_redaction": "host repo root 前方は <repo> へ mask 済み (--host-repo-root)"
+}

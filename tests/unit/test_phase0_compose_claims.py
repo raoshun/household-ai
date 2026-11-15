@@ -28,16 +28,23 @@ from phase0_compose_claims_probe import (  # noqa: E402
     _TAMPER_CLAIMS,
     CHECKS_PROFILE,
     COMPOSE_SERVICE_NAMES,
+    DATA_MOUNT_TARGET,
     DEFAULT_IMAGE,
     GATE_MOUNT_TARGETS,
     HOST_GATEWAY,
+    HOST_GATEWAY_SERVICE_NAMES,
     HOST_PATH_MASK,
     IMAGE_EXCLUDED_CONTEXT_NAMES,
     LITERAL_CREDENTIAL_RE,
     NAMED_DATA_VOLUME,
-    PROOF_STATE_ENV_KEYS,
+    RUNTIME_SERVICE_NAME,
     TAMPER_MODES,
+    UI_BRIDGE_EVIDENCE_TARGET,
+    UI_BRIDGE_SERVICE_NAME,
+    UI_PROFILE,
+    UI_SERVICE_NAME,
     ComposeClaimsError,
+    _credential_compose_literals,
     collect_measured,
     compose_text_with_literal_credential,
     redact_host_paths,
@@ -61,6 +68,8 @@ EXPECTED_CLAIM_IDS: tuple[str, ...] = (
     "gate_uses_working_tree_ro",
     "proof_state_in_container_tmp",
     "secrets_and_data_excluded_from_image",
+    "ui_bridge_state_and_mounts",
+    "ui_published_ports_loopback_only",
 )
 
 COMPOSE_TEXT = """
@@ -92,6 +101,50 @@ services:
       AI_API_KEY: ${AI_API_KEY:-local-dummy}
     extra_hosts:
       - host.docker.internal:host-gateway
+  api:
+    profiles: ["ui"]
+    image: household-ai-runtime-test:0.1.0
+    command:
+      - sh
+      - -c
+      - >-
+        exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - household-data:/app/data
+    environment:
+      AI_PROVIDER: ollama
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://127.0.0.1:3000}
+      CONTEXT_TOKEN_WARNING_THRESHOLD: ${CONTEXT_TOKEN_WARNING_THRESHOLD:-0.8}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+  ui-bridge:
+    profiles: ["checks"]
+    image: household-ai-runtime-test:0.1.0
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./tests:/app/tests:ro
+      - ./.local/ui/out:/out
+    environment:
+      AI_PROVIDER: ollama
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      CONTEXT_TOKEN_WARNING_RATIO: "0.8"
+      DATA_DIR: /tmp/ui-proof-data
+      COPILOT_RUNTIME_DIR: /tmp/ui-proof-runtime
+      UI_BRIDGE_EVIDENCE_DIR: /out
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    command:
+      - timeout
+      - "1200"
+      - sh
+      - -c
+      - >-
+        .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short
 volumes:
   household-data:
 """
@@ -165,6 +218,85 @@ EXPANDED_CONFIG: dict[str, Any] = {
             },
             "extra_hosts": [HOST_GATEWAY],
         },
+        UI_SERVICE_NAME: {
+            "image": DEFAULT_IMAGE,
+            "profiles": [UI_PROFILE],
+            "working_dir": "/app/backend",
+            "command": [
+                "sh",
+                "-c",
+                "exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
+            ],
+            "ports": [
+                {
+                    "mode": "ingress",
+                    "host_ip": "127.0.0.1",
+                    "target": 8000,
+                    "published": "8000",
+                    "protocol": "tcp",
+                }
+            ],
+            "volumes": [
+                {
+                    "type": "volume",
+                    "source": NAMED_DATA_VOLUME,
+                    "target": DATA_MOUNT_TARGET,
+                    "volume": {},
+                },
+            ],
+            "environment": {
+                "AI_PROVIDER": "ollama",
+                "AI_API_KEY": "local-dummy",
+                "COPILOT_GITHUB_TOKEN": "",
+                "API_CORS_ORIGINS": "http://127.0.0.1:3000",
+                "CONTEXT_TOKEN_WARNING_THRESHOLD": "0.8",
+            },
+            "extra_hosts": [HOST_GATEWAY],
+        },
+        UI_BRIDGE_SERVICE_NAME: {
+            "image": DEFAULT_IMAGE,
+            "profiles": [CHECKS_PROFILE],
+            "working_dir": "/app/backend",
+            "command": [
+                "timeout",
+                "1200",
+                "sh",
+                "-c",
+                ".venv/bin/python -m pytest tests/live -q -p no:cacheprovider",
+            ],
+            "volumes": [
+                {
+                    "type": "bind",
+                    "source": "/host/worktree/backend/app",
+                    "target": GATE_MOUNT_TARGETS[0],
+                    "read_only": True,
+                    "bind": {},
+                },
+                {
+                    "type": "bind",
+                    "source": "/host/worktree/tests",
+                    "target": GATE_MOUNT_TARGETS[1],
+                    "read_only": True,
+                    "bind": {},
+                },
+                {
+                    "type": "bind",
+                    "source": "/host/worktree/.local/ui/out",
+                    "target": UI_BRIDGE_EVIDENCE_TARGET,
+                    "bind": {},
+                },
+            ],
+            "environment": {
+                "AI_PROVIDER": "ollama",
+                "AI_API_KEY": "local-dummy",
+                "COPILOT_GITHUB_TOKEN": "",
+                "CONTEXT_TOKEN_WARNING_RATIO": "0.8",
+                "DATA_DIR": "/tmp/ui-proof-data",
+                "COPILOT_RUNTIME_DIR": "/tmp/ui-proof-runtime",
+                "UI_BRIDGE_EVIDENCE_DIR": UI_BRIDGE_EVIDENCE_TARGET,
+            },
+            "extra_hosts": [HOST_GATEWAY],
+        },
     },
     "volumes": {NAMED_DATA_VOLUME: {"name": f"household-ai_{NAMED_DATA_VOLUME}"}},
 }
@@ -195,14 +327,32 @@ def test_measured_records_compose_facts_used_by_claims() -> None:
     assert measured["default_up_services"] == ["runtime"]
     assert measured["profiled_services"]["gate"] == [CHECKS_PROFILE]
     assert measured["named_volumes"] == [NAMED_DATA_VOLUME]
-    assert measured["named_volume_mounts"] == [f"{NAMED_DATA_VOLUME}:/app/data"]
+    assert measured["named_volume_mounts"] == {
+        RUNTIME_SERVICE_NAME: [f"{NAMED_DATA_VOLUME}:/app/data"],
+        UI_SERVICE_NAME: [f"{NAMED_DATA_VOLUME}:/app/data"],
+        "gate": [],
+        "proof": [],
+        UI_BRIDGE_SERVICE_NAME: [],
+    }
     assert all(
-        HOST_GATEWAY in measured["extra_hosts"][name] for name in ("runtime", "proof")
+        HOST_GATEWAY in measured["extra_hosts"][name]
+        for name in HOST_GATEWAY_SERVICE_NAMES
     )
     assert measured["extra_hosts"]["gate"] == []
     assert measured["proof_state_dirs"] == EXPECTED_PROOF_STATE_ENV
-    assert set(measured["proof_state_dirs"]) == set(PROOF_STATE_ENV_KEYS)
+    assert measured["ui_bridge_state_dirs"] == {
+        "DATA_DIR": "/tmp/ui-proof-data",
+        "COPILOT_RUNTIME_DIR": "/tmp/ui-proof-runtime",
+    }
     assert all(v.startswith("/tmp/") for v in measured["proof_state_dirs"].values())
+    assert all(v.startswith("/tmp/") for v in measured["ui_bridge_state_dirs"].values())
+    assert measured["profiled_services"][UI_SERVICE_NAME] == [UI_PROFILE]
+    assert measured["published_ports"][UI_SERVICE_NAME] == [
+        "127.0.0.1:8000->8000/tcp mode=ingress"
+    ]
+    assert measured["published_ports"][RUNTIME_SERVICE_NAME] == []
+    assert measured["ui_bridge_evidence_dir"] == UI_BRIDGE_EVIDENCE_TARGET
+    assert "tests/live" in measured["ui_bridge_command"]
     assert measured["compose_credential_literals"] == []
     assert all(
         name in measured["dockerignore_excluded"]
@@ -250,6 +400,38 @@ def test_dockerignore_missing_exclusion_is_rejected() -> None:
         verify_claims(_measured(dockerignore_text=dockerignore))
 
 
+def test_compose_credential_literals_ignore_interpolation_and_scalars() -> None:
+    """補間 / 数値 / URL は credential literal として扱わない (claim 3) (§13)."""
+
+    compose = "\n".join(
+        [
+            '      CONTEXT_TOKEN_WARNING_RATIO: "0.8"',
+            "      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}",
+            '      API_CORS_ORIGINS: "http://127.0.0.1:3000"',
+            "      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}",
+            '      AI_API_KEY: "sk-abc123def456"',
+        ]
+    )
+
+    assert _credential_compose_literals(compose) == ['AI_API_KEY: "sk-abc123def456"']
+
+
+def test_ui_bridge_extra_bind_mount_is_rejected() -> None:
+    """host 側 mount を 1 つ増やす (state を host へ出す defect) を検出する."""
+
+    config = copy.deepcopy(EXPANDED_CONFIG)
+    config["services"][UI_BRIDGE_SERVICE_NAME]["volumes"].append(
+        {
+            "type": "bind",
+            "source": "/host/worktree/.local/ui/state",
+            "target": "/app/state",
+            "bind": {},
+        }
+    )
+    with pytest.raises(ComposeClaimsError, match="ui_bridge_state_and_mounts"):
+        verify_claims(_measured(config))
+
+
 def test_tamper_helpers_do_not_mutate_inputs() -> None:
     config = copy.deepcopy(EXPANDED_CONFIG)
     _tampered, _marker = tamper_config(config, "bind-data-dir")
@@ -294,7 +476,7 @@ def _evidence_with_host_paths() -> dict[str, Any]:
         "measured": {
             "gate_config_mounts": [f"{root}/.local/compose-claims"],
             "services": ["gate", "proof", "runtime"],
-            "counts": {"claims": 8, "green": True},
+            "counts": {"claims": 10, "green": True},
         },
     }
 
@@ -313,7 +495,7 @@ def test_redact_host_paths_masks_nested_strings_only() -> None:
     # container 内 path はホスト mask の対象ではない
     assert claims[1]["measured"]["images"] == ["/home/other/build:/app/build"]
     assert redacted["measured"]["services"] == ["gate", "proof", "runtime"]
-    assert redacted["measured"]["counts"] == {"claims": 8, "green": True}
+    assert redacted["measured"]["counts"] == {"claims": 10, "green": True}
     # 入力は書き換えない (tamper 実測で inspection 中の copy だけが変わる)
     assert original == _evidence_with_host_paths()
 

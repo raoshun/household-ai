@@ -1,7 +1,7 @@
 # Phase 0 検証用の Docker 設定 (§15 Phase 0 完了条件の "lint と unit test は
-# Docker 環境内で実行する" に対応)。API サーバー (backend/app/main.py) は Phase 1 のため、
-# ここでは import 確認・lint・unit test と Custom Tool の live proof を Docker で回す。
-#
+# Docker 環境内で実行する" に対応)。import 確認・lint・unit test と Custom Tool の live
+# proof を Docker で回す。UI ブリッジの API サーバー (backend/app/main.py) は profiles: ui の
+# api サービスで起動する (make phase0-ui-up / make ui-up)。
 # 実行例 (make 経由を推奨. 生の docker compose でも同じ):
 #   make gate                        # import + lint + unit test (既定の検証コマンド)
 #   make up                          # 既定の up: gate / proof は起動しない
@@ -33,7 +33,7 @@ services:
       SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-900}
     extra_hosts:
       - host.docker.internal:host-gateway
-    # Phase 1 で FastAPI 起動に置き換える。Phase 0 は import 確認後に idle で待つ。
+    # UI ブリッジの FastAPI 起動は profiles: ui の api サービスで行う。Phase 0 gate では idle で待つ。
     command:
       - sh
       - -c
@@ -98,6 +98,98 @@ services:
       - "900"
       - python
       - /app/tests/proofs/phase0_live_proof.py
+
+  # --- Phase 1 UI布里ッジ (profiles: ui) -----------------------------------------
+  # AG-UI / CopilotKit 連携用の API サーバー (backend/app/main.py)。profiles ["ui"] で
+  # 分離しているので `docker compose up -d` や make gate / make proof の挙動は変えない。
+  # Next.js / CopilotKit は image に含めない (§6.4)。frontend は host の node_modules で
+  #起動する (make ui-frontend)。
+  api:
+    profiles: ["ui"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+    # image の WORKDIR は /app/backend、PATH は /app/backend/.venv/bin を含む。
+    command:
+      - sh
+      - -c
+      - >-
+        exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      # dev の frontend (http://127.0.0.1:3000) からの CORS を前提に loopback 公開のみ
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - household-data:/app/data
+    environment:
+      AI_PROVIDER: ollama
+      AI_MODEL: ${AI_MODEL:-gemma4:e2b}
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://127.0.0.1:3000}
+      SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-900}
+      AGENT_TURN_TIMEOUT_SECONDS: ${AGENT_TURN_TIMEOUT_SECONDS:-240}
+      MONITOR_HEARTBEAT_SECONDS: ${MONITOR_HEARTBEAT_SECONDS:-5}
+      MONITOR_REPLAY_LIMIT: ${MONITOR_REPLAY_LIMIT:-200}
+      MAX_FRAMES_PER_THREAD: ${MAX_FRAMES_PER_THREAD:-400}
+      MAX_CONCURRENT_TURNS: ${MAX_CONCURRENT_TURNS:-4}
+      PERMISSION_TIMEOUT_SECONDS: ${PERMISSION_TIMEOUT_SECONDS:-120}
+      CONTEXT_TOKEN_WARNING_THRESHOLD: ${CONTEXT_TOKEN_WARNING_THRESHOLD:-0.8}
+      CONTEXT_WARNING_COST_JPY: ${CONTEXT_WARNING_COST_JPY:-20}
+      AGUI_EMIT_REASONING: ${AGUI_EMIT_REASONING:-on}
+      DEMO_RULE_TOOLS: ${DEMO_RULE_TOOLS:-on}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - .venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  # UI ブリッジの live proof (§13 / README §14)。host の Ollama を使い、状態は container
+  # 内の /tmp に隔離する (named volume / repo bind mount を使わない理由は上の proof と同じ)。
+  ui-bridge:
+    profiles: ["checks"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./tests:/app/tests:ro
+      # 証跡 JSON は /out (host の .local/ui/out へ bind mount) へ書く
+      - ./.local/ui/out:/out
+    environment:
+      AI_PROVIDER: ollama
+      AI_MODEL: ${AI_MODEL:-gemma4:e2b}
+      AI_API_KEY: ${AI_API_KEY:-local-dummy}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      HOUSEHOLD_TOOL_POLICY: registered
+      HOUSEHOLD_AI_RUN_LIVE_TESTS: "1"
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      DATA_DIR: /tmp/ui-proof-data
+      COPILOT_RUNTIME_DIR: /tmp/ui-proof-runtime
+      MONITOR_REPLAY_LIMIT: "500"
+      CONTEXT_TOKEN_WARNING_RATIO: "0.8"
+      CONTEXT_WARNING_COST_JPY: "20"
+      MAX_FRAMES_PER_THREAD: "400"
+      MAX_CONCURRENT_TURNS: "4"
+      # 証跡 JSON を書く dir (./local/ui/out へ bind mount した /out)
+      UI_BRIDGE_EVIDENCE_DIR: /out
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    command:
+      - timeout
+      - "1200"
+      - sh
+      - -c
+      - >-
+        .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short
+        --import-mode=importlib -rf
 
 volumes:
   household-data:

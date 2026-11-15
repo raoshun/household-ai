@@ -1,0 +1,9 @@
+{
+  "gate": "compose-claims-tamper",
+  "tamper_mode": "ui-bridge-state-mounted",
+  "tamper_marker": "ui-bridge mount ./data/ui-bridge-state:/app/data",
+  "target_claim": "ui_bridge_state_and_mounts",
+  "reject_reason": "ComposeClaimsError: ui_bridge_state_and_mounts 不合格: state={\"COPILOT_RUNTIME_DIR\": \"/tmp/ui-proof-runtime\", \"DATA_DIR\": \"/tmp/ui-proof-data\"} mounts={\"/app/backend/app\": {\"source\": \"<repo>/backend/app\", \"mode\": \"ro\", \"named\": false}, \"/app/tests\": {\"source\": \"<repo>/tests\", \"mode\": \"ro\", \"named\": false}, \"/out\": {\"source\": \"<repo>/.local/ui/out\", \"mode\": \"rw\", \"named\": false}, \"/app/data\": {\"source\": \"./data/ui-bridge-state\", \"mode\": \"rw\", \"named\": false}} command=timeout 1200 sh -c .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short --import-mode=importlib -rf",
+  "guard_detected": true,
+  "host_path_redaction": "host repo root 前方は <repo> へ mask 済み (--host-repo-root)"
+}
