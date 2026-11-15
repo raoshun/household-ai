@@ -211,14 +211,18 @@ def test_contract_s4_exception_mapping(
 
 
 def test_problem_json_body_matches_contract_s5_keys() -> None:
-    body = ApiProblem(
-        status_code=409,
-        error_type="unknown_error",
-        code="unknown_error.turn_in_progress",
-        message="session is busy",
-        recoverable=False,
-        details={"turn_id": "c:t9"},
-    ).to_problem_detail().model_dump()
+    body = (
+        ApiProblem(
+            status_code=409,
+            error_type="unknown_error",
+            code="unknown_error.turn_in_progress",
+            message="session is busy",
+            recoverable=False,
+            details={"turn_id": "c:t9"},
+        )
+        .to_problem_detail()
+        .model_dump()
+    )
     assert set(body) == PROBLEM_BODY_KEYS
     assert body == {
         "error_type": "unknown_error",

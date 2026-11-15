@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import pytest
+
 from app.services.audit import ConversationLog
 from app.services.exceptions import (
     InvalidRequestError,

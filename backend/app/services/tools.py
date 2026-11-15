@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 from app.agent.permissions import PermissionBroker
@@ -29,6 +30,7 @@ WRITE_TOOLS = (
     "request_rule_approval",
 )
 RULE_TOOLS: tuple[str, ...] = READ_TOOLS + WRITE_TOOLS
+
 
 @dataclass(slots=True)
 class RuleToolContext:
@@ -146,6 +148,267 @@ def _require_grant(
     return True
 
 
+def _tool_read_rules(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    status = str(arguments.get("status") or "active")
+    query = str(arguments.get("query") or "").strip()
+    limit = int(arguments.get("limit") or 20)
+    rules = ctx.store.list_rules(status=None if status == "all" else status)
+    if query:
+        needle = query.lower()
+        rules = [
+            rule for rule in rules if needle in f"{rule.title} {rule.content}".lower()
+        ]
+    selected = rules[: max(1, min(limit, 50))]
+    _audit(
+        ctx,
+        action="read_rules",
+        actor="agent",
+        detail={"count": len(selected), "query": query, "status": status},
+        kind="rule_mutation",
+        target="rule-store",
+    )
+    return {
+        "count": len(selected),
+        "granted": True,
+        "rules": [_rule_brief(rule) for rule in selected],
+        "total": len(rules),
+    }
+
+
+def _tool_detect_rule_conflicts(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    draft = _rule_draft(
+        str(arguments.get("title") or ""), str(arguments.get("content") or "")
+    )
+    conflicts = ctx.store.detect_conflicts(draft)
+    _audit(
+        ctx,
+        action="detect_conflicts",
+        actor="agent",
+        detail={"conflict_count": len(conflicts), "title": draft.title},
+        kind="rule_mutation",
+        target="rule-store",
+    )
+    return {
+        "conflicts": [conflict.to_dict() for conflict in conflicts],
+        "count": len(conflicts),
+        "granted": True,
+        "hint": (
+            "矛盾候補があります。提案前に家族へ確認するか、既存ルールとの"
+            "統合を検討して下さい。"
+            if conflicts
+            else "既存ルールとの重複候補はありません。"
+        ),
+    }
+
+
+def _tool_propose_rule(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    title = str(arguments.get("title") or "").strip()
+    content = str(arguments.get("content") or "").strip()
+    if not title or not content:
+        return _deny("title と content の両方が必要です。")
+    if not _require_grant(ctx, "propose_rule", arguments, target=f"rule:{title}"):
+        return _deny(
+            "家族の承認がないためルール候補を作成できません。"
+            "判断根拠と提案内容を説明し、承認を依頼して下さい。"
+        )
+    rule = ctx.store.create_rule(
+        content=content,
+        created_by="agent",
+        source=AGENT_SOURCE,
+        status="pending",
+        title=title,
+    )
+    conflicts = ctx.store.detect_conflicts(rule)
+    judgment = ctx.judgments.record(
+        approval_refs=[
+            record.approval_id
+            for record in ctx.broker.consumed_grants()
+            if record.tool_name == "propose_rule"
+        ],
+        audit_refs=[entry.entry_id for entry in ctx.audit.entries("rule_mutation")],
+        basis=[{"rule_id": None, "text": "agent proposal from conversation"}],
+        created_at=rule.created_at,
+        decision=f"created pending candidate {rule.rule_id} ({rule.title})",
+        judgment_id=ctx.judgments.next_id(),
+        kind="rule_proposal",
+        notes=_preview(content),
+        rule_refs=[_rule_brief(rule)],
+        tool_call_refs=[f"{ctx.conversation_id}:{rule.rule_id}"],
+    )
+    _audit(
+        ctx,
+        action="rule_candidate_created",
+        actor="agent",
+        detail={"judgment_id": judgment.judgment_id, "rule_id": rule.rule_id},
+        kind="rule_mutation",
+        target=rule.rule_id,
+    )
+    return {
+        "conflicts": [conflict.to_dict() for conflict in conflicts],
+        "granted": True,
+        "judgment_id": judgment.judgment_id,
+        "message": (
+            f"ルール候補 {rule.rule_id} を pending で作成しました。"
+            "反映には家族の承認 (rules approve API) が必要です。"
+        ),
+        "rule": _rule_brief(rule),
+        "status": rule.status,
+    }
+
+
+def _tool_update_rule_candidate(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    rule_id = str(arguments.get("rule_id") or "").strip()
+    content = str(arguments.get("content") or "").strip()
+    if not rule_id or not content:
+        return _deny("rule_id と content の両方が必要です。")
+    existing = ctx.store.get_rule(rule_id)
+    if existing is None:
+        return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
+    if not _require_grant(ctx, "update_rule_candidate", arguments, target=rule_id):
+        return _deny(
+            "家族の承認がないためルールを変更できません。"
+            "変更内容と理由を説明し、承認依頼を先行させて下さい。"
+        )
+    rule = ctx.store.update_rule(
+        rule_id,
+        content=content,
+        note="agent による候補更新 (要家族承認)",
+        title=(str(arguments.get("title")).strip() if arguments.get("title") else None),
+    )
+    judgment = ctx.judgments.record(
+        audit_refs=[entry.entry_id for entry in ctx.audit.entries("rule_mutation")],
+        basis=[{"rule_id": rule_id, "text": "agent candidate update"}],
+        created_at=rule.updated_at,
+        decision=f"updated rule {rule.rule_id} to revision {rule.revision} (pending)",
+        judgment_id=ctx.judgments.next_id(),
+        kind="rule_update",
+        notes=_preview(rule.content),
+        rule_refs=[_rule_brief(rule)],
+    )
+    _audit(
+        ctx,
+        action="rule_candidate_updated",
+        actor="agent",
+        detail={"judgment_id": judgment.judgment_id, "revision": rule.revision},
+        kind="rule_mutation",
+        target=rule_id,
+    )
+    return {
+        "granted": True,
+        "judgment_id": judgment.judgment_id,
+        "message": (
+            f"rule {rule_id} を revision {rule.revision} で更新し pending にしました。"
+        ),
+        "rule": _rule_brief(rule),
+        "status": rule.status,
+    }
+
+
+def _tool_delete_rule_candidate(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    rule_id = str(arguments.get("rule_id") or "").strip()
+    reason = str(arguments.get("reason") or "").strip()
+    if not rule_id:
+        return _deny("rule_id が必要です。")
+    if ctx.store.get_rule(rule_id) is None:
+        return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
+    if not _require_grant(ctx, "delete_rule_candidate", arguments, target=rule_id):
+        return _deny(
+            "家族の承認がないためルールを削除できません。削除理由を説明し、"
+            "承認依頼を先行させて下さい。"
+        )
+    rule = ctx.store.delete_rule(rule_id, reason=reason or "agent request")
+    judgment = ctx.judgments.record(
+        basis=[{"rule_id": rule_id, "text": "agent tombstone request"}],
+        created_at=rule.updated_at,
+        decision=f"tombstoned rule {rule_id}",
+        judgment_id=ctx.judgments.next_id(),
+        kind="rule_deletion",
+        notes=reason,
+        rule_refs=[_rule_brief(rule)],
+    )
+    _audit(
+        ctx,
+        action="rule_tombstoned",
+        actor="agent",
+        detail={"judgment_id": judgment.judgment_id, "reason": reason},
+        kind="rule_mutation",
+        target=rule_id,
+    )
+    return {
+        "granted": True,
+        "judgment_id": judgment.judgment_id,
+        "message": f"rule {rule_id} を tombstone しました (復元は restore API)。",
+        "rule": _rule_brief(rule),
+        "status": rule.status,
+    }
+
+
+def _tool_request_rule_approval(
+    ctx: RuleToolContext,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """agent は「承認依頼の記録」だけ作れる (§6.3 active 化禁止)。"""
+
+    rule_id = str(arguments.get("rule_id") or "").strip()
+    reason = str(arguments.get("reason") or "").strip()
+    if not rule_id:
+        return _deny("rule_id が必要です。")
+    rule = ctx.store.get_rule(rule_id)
+    if rule is None:
+        return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
+    if rule.status != "pending":
+        return _deny(f"rule {rule_id} は pending でありません ({rule.status})。")
+    conflicts = ctx.store.detect_conflicts(rule)
+    judgment = ctx.judgments.record(
+        basis=[{"rule_id": rule_id, "text": reason or "agent approval request"}],
+        created_at=rule.updated_at,
+        decision=f"requested family approval for {rule_id}",
+        human_confirmation={"state": "requested"},
+        judgment_id=ctx.judgments.next_id(),
+        kind="rule_approval_request",
+        missing=[] if not conflicts else [c.kind for c in conflicts],
+        notes=reason,
+        rule_refs=[_rule_brief(rule)],
+    )
+    _audit(
+        ctx,
+        action="approval_requested_by_agent",
+        actor="agent",
+        detail={
+            "conflict_count": len(conflicts),
+            "judgment_id": judgment.judgment_id,
+            "reason": reason,
+        },
+        kind="approval",
+        target=rule_id,
+    )
+    return {
+        "conflicts": [conflict.to_dict() for conflict in conflicts],
+        "granted": True,
+        "judgment_id": judgment.judgment_id,
+        "message": (
+            f"rule {rule_id} の承認依頼を記録しました。"
+            "家族が UI / rules approve API で承認するまで active になりません。"
+        ),
+        "rule": _rule_brief(rule),
+    }
+
+
 def build_rule_tools(
     ctx: RuleToolContext,
     *,
@@ -187,243 +450,6 @@ def build_rule_tools(
             )
         )
 
-    def read_rules(arguments: dict[str, Any]) -> dict[str, Any]:
-        status = str(arguments.get("status") or "active")
-        query = str(arguments.get("query") or "").strip()
-        limit = int(arguments.get("limit") or 20)
-        rules = ctx.store.list_rules(status=None if status == "all" else status)
-        if query:
-            needle = query.lower()
-            rules = [
-                rule
-                for rule in rules
-                if needle in f"{rule.title} {rule.content}".lower()
-            ]
-        selected = rules[: max(1, min(limit, 50))]
-        _audit(
-            ctx,
-            action="read_rules",
-            actor="agent",
-            detail={"count": len(selected), "query": query, "status": status},
-            kind="rule_mutation",
-            target="rule-store",
-        )
-        return {
-            "count": len(selected),
-            "granted": True,
-            "rules": [_rule_brief(rule) for rule in selected],
-            "total": len(rules),
-        }
-
-    def detect_rule_conflicts_tool(arguments: dict[str, Any]) -> dict[str, Any]:
-        draft = _rule_draft(
-            str(arguments.get("title") or ""), str(arguments.get("content") or "")
-        )
-        conflicts = ctx.store.detect_conflicts(draft)
-        _audit(
-            ctx,
-            action="detect_conflicts",
-            actor="agent",
-            detail={"conflict_count": len(conflicts), "title": draft.title},
-            kind="rule_mutation",
-            target="rule-store",
-        )
-        return {
-            "conflicts": [conflict.to_dict() for conflict in conflicts],
-            "count": len(conflicts),
-            "granted": True,
-            "hint": (
-                "矛盾候補があります。提案前に家族へ確認するか、既存ルールとの"
-                "統合を検討して下さい。"
-                if conflicts
-                else "既存ルールとの重複候補はありません。"
-            ),
-        }
-
-    def propose_rule(arguments: dict[str, Any]) -> dict[str, Any]:
-        title = str(arguments.get("title") or "").strip()
-        content = str(arguments.get("content") or "").strip()
-        if not title or not content:
-            return _deny("title と content の両方が必要です。")
-        if not _require_grant(ctx, "propose_rule", arguments, target=f"rule:{title}"):
-            return _deny(
-                "家族の承認がないためルール候補を作成できません。"
-                "判断根拠と提案内容を説明し、承認を依頼して下さい。"
-            )
-        rule = ctx.store.create_rule(
-            content=content,
-            created_by="agent",
-            source=AGENT_SOURCE,
-            status="pending",
-            title=title,
-        )
-        conflicts = ctx.store.detect_conflicts(rule)
-        judgment = ctx.judgments.record(
-            approval_refs=[
-                record.approval_id
-                for record in ctx.broker.consumed_grants()
-                if record.tool_name == "propose_rule"
-            ],
-            audit_refs=[entry.entry_id for entry in ctx.audit.entries("rule_mutation")],
-            basis=[{"rule_id": None, "text": "agent proposal from conversation"}],
-            created_at=rule.created_at,
-            decision=f"created pending candidate {rule.rule_id} ({rule.title})",
-            judgment_id=ctx.judgments.next_id(),
-            kind="rule_proposal",
-            notes=_preview(content),
-            rule_refs=[_rule_brief(rule)],
-            tool_call_refs=[f"{ctx.conversation_id}:{rule.rule_id}"],
-        )
-        _audit(
-            ctx,
-            action="rule_candidate_created",
-            actor="agent",
-            detail={"judgment_id": judgment.judgment_id, "rule_id": rule.rule_id},
-            kind="rule_mutation",
-            target=rule.rule_id,
-        )
-        return {
-            "conflicts": [conflict.to_dict() for conflict in conflicts],
-            "granted": True,
-            "judgment_id": judgment.judgment_id,
-            "message": (
-                f"ルール候補 {rule.rule_id} を pending で作成しました。"
-                "反映には家族の承認 (rules approve API) が必要です。"
-            ),
-            "rule": _rule_brief(rule),
-            "status": rule.status,
-        }
-
-    def update_rule_candidate(arguments: dict[str, Any]) -> dict[str, Any]:
-        rule_id = str(arguments.get("rule_id") or "").strip()
-        content = str(arguments.get("content") or "").strip()
-        if not rule_id or not content:
-            return _deny("rule_id と content の両方が必要です。")
-        existing = ctx.store.get_rule(rule_id)
-        if existing is None:
-            return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
-        if not _require_grant(ctx, "update_rule_candidate", arguments, target=rule_id):
-            return _deny(
-                "家族の承認がないためルールを変更できません。"
-                "変更内容と理由を説明し、承認依頼を先行させて下さい。"
-            )
-        rule = ctx.store.update_rule(
-            rule_id,
-            content=content,
-            note="agent による候補更新 (要家族承認)",
-            title=(str(arguments.get("title")).strip() if arguments.get("title") else None),
-        )
-        judgment = ctx.judgments.record(
-            audit_refs=[entry.entry_id for entry in ctx.audit.entries("rule_mutation")],
-            basis=[{"rule_id": rule_id, "text": "agent candidate update"}],
-            created_at=rule.updated_at,
-            decision=f"updated rule {rule.rule_id} to revision {rule.revision} (pending)",
-            judgment_id=ctx.judgments.next_id(),
-            kind="rule_update",
-            notes=_preview(rule.content),
-            rule_refs=[_rule_brief(rule)],
-        )
-        _audit(
-            ctx,
-            action="rule_candidate_updated",
-            actor="agent",
-            detail={"judgment_id": judgment.judgment_id, "revision": rule.revision},
-            kind="rule_mutation",
-            target=rule_id,
-        )
-        return {
-            "granted": True,
-            "judgment_id": judgment.judgment_id,
-            "message": f"rule {rule_id} を revision {rule.revision} で更新し pending にしました。",
-            "rule": _rule_brief(rule),
-            "status": rule.status,
-        }
-
-    def delete_rule_candidate(arguments: dict[str, Any]) -> dict[str, Any]:
-        rule_id = str(arguments.get("rule_id") or "").strip()
-        reason = str(arguments.get("reason") or "").strip()
-        if not rule_id:
-            return _deny("rule_id が必要です。")
-        if ctx.store.get_rule(rule_id) is None:
-            return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
-        if not _require_grant(ctx, "delete_rule_candidate", arguments, target=rule_id):
-            return _deny(
-                "家族の承認がないためルールを削除できません。削除理由を説明し、"
-                "承認依頼を先行させて下さい。"
-            )
-        rule = ctx.store.delete_rule(rule_id, reason=reason or "agent request")
-        judgment = ctx.judgments.record(
-            basis=[{"rule_id": rule_id, "text": "agent tombstone request"}],
-            created_at=rule.updated_at,
-            decision=f"tombstoned rule {rule_id}",
-            judgment_id=ctx.judgments.next_id(),
-            kind="rule_deletion",
-            notes=reason,
-            rule_refs=[_rule_brief(rule)],
-        )
-        _audit(
-            ctx,
-            action="rule_tombstoned",
-            actor="agent",
-            detail={"judgment_id": judgment.judgment_id, "reason": reason},
-            kind="rule_mutation",
-            target=rule_id,
-        )
-        return {
-            "granted": True,
-            "judgment_id": judgment.judgment_id,
-            "message": f"rule {rule_id} を tombstone しました (復元は restore API)。",
-            "rule": _rule_brief(rule),
-            "status": rule.status,
-        }
-
-    def request_rule_approval(arguments: dict[str, Any]) -> dict[str, Any]:
-        """agent は「承認依頼の記録」だけ作れる (§6.3 active 化禁止)。"""
-
-        rule_id = str(arguments.get("rule_id") or "").strip()
-        reason = str(arguments.get("reason") or "").strip()
-        if not rule_id:
-            return _deny("rule_id が必要です。")
-        rule = ctx.store.get_rule(rule_id)
-        if rule is None:
-            return _deny(f"rule {rule_id} が見つかりません。", detail={"rule_id": rule_id})
-        if rule.status != "pending":
-            return _deny(f"rule {rule_id} は pending でありません ({rule.status})。")
-        conflicts = ctx.store.detect_conflicts(rule)
-        judgment = ctx.judgments.record(
-            basis=[{"rule_id": rule_id, "text": reason or "agent approval request"}],
-            created_at=rule.updated_at,
-            decision=f"requested family approval for {rule_id}",
-            human_confirmation={"state": "requested"},
-            judgment_id=ctx.judgments.next_id(),
-            kind="rule_approval_request",
-            missing=[] if not conflicts else [c.kind for c in conflicts],
-            notes=reason,
-            rule_refs=[_rule_brief(rule)],
-        )
-        _audit(
-            ctx,
-            action="approval_requested_by_agent",
-            actor="agent",
-            detail={
-                "conflict_count": len(conflicts),
-                "judgment_id": judgment.judgment_id,
-                "reason": reason,
-            },
-            kind="approval",
-            target=rule_id,
-        )
-        return {
-            "conflicts": [conflict.to_dict() for conflict in conflicts],
-            "granted": True,
-            "judgment_id": judgment.judgment_id,
-            "message": (
-                f"rule {rule_id} の承認依頼を記録しました。"
-                "家族が UI / rules approve API で承認するまで active になりません。"
-            ),
-            "rule": _rule_brief(rule),
-        }
-
     add(
         approval_mode="auto",
         description=(
@@ -436,11 +462,14 @@ def build_rule_tools(
             "properties": {
                 "limit": {"type": "integer"},
                 "query": {"type": "string"},
-                "status": {"enum": ["active", "all", "pending", "tombstoned"], "type": "string"},
+                "status": {
+                    "enum": ["active", "all", "pending", "tombstoned"],
+                    "type": "string",
+                },
             },
             "type": "object",
         },
-        run=read_rules,
+        run=partial(_tool_read_rules, ctx),
     )
     add(
         approval_mode="auto",
@@ -458,7 +487,7 @@ def build_rule_tools(
             "required": ["content", "title"],
             "type": "object",
         },
-        run=detect_rule_conflicts_tool,
+        run=partial(_tool_detect_rule_conflicts, ctx),
     )
     add(
         approval_mode="ask",
@@ -477,7 +506,7 @@ def build_rule_tools(
             "required": ["content", "title"],
             "type": "object",
         },
-        run=propose_rule,
+        run=partial(_tool_propose_rule, ctx),
     )
     add(
         approval_mode="ask",
@@ -493,7 +522,7 @@ def build_rule_tools(
             "required": ["content", "rule_id"],
             "type": "object",
         },
-        run=update_rule_candidate,
+        run=partial(_tool_update_rule_candidate, ctx),
     )
     add(
         approval_mode="ask",
@@ -508,7 +537,7 @@ def build_rule_tools(
             "required": ["rule_id"],
             "type": "object",
         },
-        run=delete_rule_candidate,
+        run=partial(_tool_delete_rule_candidate, ctx),
     )
     add(
         approval_mode="auto",
@@ -526,7 +555,7 @@ def build_rule_tools(
             "required": ["rule_id"],
             "type": "object",
         },
-        run=request_rule_approval,
+        run=partial(_tool_request_rule_approval, ctx),
     )
     return declarations
 
@@ -535,7 +564,7 @@ __all__ = [
     "AGENT_SOURCE",
     "READ_TOOLS",
     "RULE_TOOLS",
-    "RuleToolContext",
     "WRITE_TOOLS",
+    "RuleToolContext",
     "build_rule_tools",
 ]

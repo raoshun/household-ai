@@ -159,7 +159,9 @@ class MonitorHub:
             return []
         return events[-limit:]
 
-    def bind_session(self, *, session_id: str | None, conversation_id: str | None) -> None:
+    def bind_session(
+        self, *, session_id: str | None, conversation_id: str | None
+    ) -> None:
         if session_id and conversation_id:
             self._session_to_conversation[session_id] = conversation_id
 
@@ -174,7 +176,10 @@ class MonitorHub:
         return self._session_to_conversation.get(session_id)
 
     def set_current_turn(self, *, session_id: str | None, turn_id: str | None) -> None:
-        """turn 開始／終了で現在の turn を登録（approval frame への turn_id 付与に使う）."""
+        """turn 開始／終了で現在の turn を登録する。
+
+        approval frame への turn_id 付与に使う。
+        """
         if not session_id:
             return
         if turn_id is None:
@@ -187,7 +192,9 @@ class MonitorHub:
             return None
         return self._current_turn.get(session_id)
 
-    def subscribe(self, *, name: str = "monitor", replay_limit: int | None = None) -> MonitorSubscription:
+    def subscribe(
+        self, *, name: str = "monitor", replay_limit: int | None = None
+    ) -> MonitorSubscription:
         limit = self._replay_limit_value if replay_limit is None else replay_limit
         subscription = MonitorSubscription(self, name=name, replay_limit=limit)
         self._subscriptions.append(subscription)
@@ -215,7 +222,9 @@ class MonitorHub:
         buffer 超過はその subscription の最古 event を落とす（監視は best effort）。
         """
         self._sequence += 1
-        resolved_turn = turn_id if turn_id is not None else self.current_turn(session_id)
+        resolved_turn = (
+            turn_id if turn_id is not None else self.current_turn(session_id)
+        )
         event = MonitorEvent(
             conversation_id=conversation_id,
             created_at=tokyo_iso(),
@@ -290,7 +299,7 @@ class ApprovalBroadcaster:
         )
 
     def publish_updated(self, record: PermissionRecord) -> None:
-        """REST 判断後など broker 外から更新を通知する paths で使う（sync・非同期両対応）."""
+        """REST 判断後など broker 外からの更新通知に使う（sync・非同期両対応）。"""
         self._hub.publish_for_session(
             "approval_updated",
             payload={"approval": record.to_dict()},

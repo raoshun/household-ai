@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+
 from app.agent.permissions import PermissionPrompt
 from app.services.exceptions import (
     PermissionStaleError,

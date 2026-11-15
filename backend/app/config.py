@@ -298,7 +298,9 @@ def load_settings(repo_root: Path | None = None) -> Settings:
         monitor_heartbeat_seconds=_env_float(
             "MONITOR_HEARTBEAT_SECONDS", DEFAULT_MONITOR_HEARTBEAT_SECONDS
         ),
-        max_concurrent_turns=_env_int("MAX_CONCURRENT_TURNS", DEFAULT_MAX_CONCURRENT_TURNS),
+        max_concurrent_turns=_env_int(
+            "MAX_CONCURRENT_TURNS", DEFAULT_MAX_CONCURRENT_TURNS
+        ),
         context_token_warning_threshold=_env_float(
             "CONTEXT_TOKEN_WARNING_THRESHOLD", DEFAULT_CONTEXT_TOKEN_WARNING_THRESHOLD
         ),

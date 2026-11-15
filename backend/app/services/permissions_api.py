@@ -58,9 +58,7 @@ class PermissionBrokerFacade(PermissionBroker):
         records = list(self._records.values())
         if session_id is not None:
             records = [
-                record
-                for record in records
-                if record.prompt.session_id == session_id
+                record for record in records if record.prompt.session_id == session_id
             ]
         if status is not None:
             records = [record for record in records if record.status == status]

@@ -1,9 +1,11 @@
 """AG-UI thread / chat session を agent-runtime へ bridge する service (§9 / §10).
 
-- thread_id == conversation_id（frontend transcript / audit / tool / approval join key）
-- 1 thread に 1 Copilot session（tool 群は thread 専属の RuleToolContext でbind）
-- turn frames を asyncio.Queue で fan-out（REST monitor と AG-UI run が同じ series を見る）
-- HITL: 実行中の permission prompt は monitor frame + AG-UI interrupt (CUSTOM + `outcome.type=interrupt`) で提示し、解決は approval REST / `resume` のどちらでも行える（README §10.3 interrupt 提示 + §12.4 human confirmation）
+- thread_id == conversation_id（transcript / audit / tool / approval の join key）
+- 1 thread に 1 Copilot session（tool 群は thread 専属の RuleToolContext で bind）
+- turn frames を asyncio.Queue で fan-out (REST monitor と AG-UI run が同一 series)
+- HITL: 実行中の permission prompt は monitor frame と AG-UI interrupt
+  (`outcome.type=interrupt`) の両方で提示し、解決は approval REST / `resume`
+  どちらでも行える (README §10.3 / §12.4)
 - README §7.1 準拠: terminal event で閉じ、中断時は partial + terminal の 1 系列
 """
 
@@ -12,12 +14,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent import AgentRuntime
-from app.agent.events import AgentEvent, AgentEventType, extract_event_text
+from app.agent.events import AgentEventType
 from app.agent.permissions import PermissionBroker
 from app.clock import tokyo_iso
 from app.config import Settings, load_settings
@@ -33,20 +35,13 @@ from app.services.exceptions import (
     UnknownTurnError,
 )
 from app.services.hub import ApprovalBroadcaster, MonitorHub
-from app.services.rules import Rule, RuleStore
+from app.services.rules import RuleStore
 from app.services.session_events import (
     MonitorEventType,
-    approval_payloads,
-    attach_approvals,
-    error_type_for,
-    frame,
-    format_context_usage,
     group_by_turn,
     latest_status_by_turn,
-    merge_frames,
-    pending_turn_outcome,
 )
-from app.services.tools import RuleToolContext, build_rule_tools
+from app.services.tools import RuleToolContext
 
 logger = logging.getLogger("household-ai.services.chat")
 
@@ -79,7 +74,8 @@ RESOLVERS: frozenset[str] = frozenset(
 )
 
 
-# chat service 系の例外は app.services.exceptions が canonical home (contract §4 taxonomy)。
+# chat service 系の例外は app.services.exceptions が canonical home
+# (contract §4 の taxonomy)。
 # chat.py は existing import 経路との互換のため同名を re-export する。
 __all__ = [
     "ChatService",
@@ -183,12 +179,16 @@ class ChatService:
         self._settings = settings if settings is not None else load_settings()
         self._owns_runtime = runtime is None
         self._runtime = runtime if runtime is not None else AgentRuntime(self._settings)
-        self._broker = broker if broker is not None else PermissionBroker(self._settings)
+        self._broker = (
+            broker if broker is not None else PermissionBroker(self._settings)
+        )
         self._rules = rules if rules is not None else RuleStore()
         self._logs = logs if logs is not None else ConversationLog()
         self._judgments = judgments if judgments is not None else JudgmentStore()
         self._audit = audit if audit is not None else AuditTrail()
-        self._hub = hub if hub is not None else MonitorHub(replay_limit=DEFAULT_MONITOR_REPLAY)
+        self._hub = (
+            hub if hub is not None else MonitorHub(replay_limit=DEFAULT_MONITOR_REPLAY)
+        )
         self._approvals = ApprovalBroadcaster(self._hub)
         self._threads: dict[str, Thread] = {}
         self._sessions: dict[str, str] = {}
@@ -221,7 +221,9 @@ class ChatService:
         )
         self._started = True
         if self._settings.session_idle_timeout_seconds > 0:
-            self._reaper = asyncio.create_task(self._reap_idle_sessions(), name="session-reaper")
+            self._reaper = asyncio.create_task(
+                self._reap_idle_sessions(), name="session-reaper"
+            )
         logger.info("chat service started provider=%s", self._settings.provider)
 
     async def stop(self) -> None:
@@ -253,7 +255,10 @@ class ChatService:
         forked_from: str | None = None,
     ) -> Thread:
         conversation_id = thread_id or self._logs.new_conversation_id()
-        if conversation_id in self._threads and not self._threads[conversation_id].closed:
+        if (
+            conversation_id in self._threads
+            and not self._threads[conversation_id].closed
+        ):
             return self._threads[conversation_id]
         session_id = await self._open_session(conversation_id, model=model)
         thread = Thread(
@@ -301,7 +306,9 @@ class ChatService:
     async def delete_thread(self, thread_id: str) -> None:
         await self.close_thread(thread_id)
         if thread_id in self._threads:
-            self._threads[thread_id].closed_at = self._threads[thread_id].closed_at or tokyo_iso()
+            self._threads[thread_id].closed_at = (
+                self._threads[thread_id].closed_at or tokyo_iso()
+            )
 
     async def fork_thread(
         self,
@@ -312,8 +319,12 @@ class ChatService:
     ) -> Thread:
         """§10 の fork (message replay で fork 前の文脈を新しい session へ複製)."""
         source = self._require_thread(thread_id)
-        messages = [m for m in self._messages.get(thread_id, []) if m["seq"] >= from_seq]
-        forked = await self.create_thread(title=title or f"{source.title} (fork)", model=source.model)
+        messages = [
+            m for m in self._messages.get(thread_id, []) if m["seq"] >= from_seq
+        ]
+        forked = await self.create_thread(
+            title=title or f"{source.title} (fork)", model=source.model
+        )
         forked.forked_from = thread_id
         replayed = 0
         for message in messages:
@@ -338,7 +349,9 @@ class ChatService:
         thread = self._require_thread(thread_id)
         thread.title = title
         self._logs.rename_conversation(thread_id, title)
-        self._publish_monitor(thread, MonitorEventType.SESSION_EVENT_RECORDED, {"title": title})
+        self._publish_monitor(
+            thread, MonitorEventType.SESSION_EVENT_RECORDED, {"title": title}
+        )
         return thread
 
     def threads(self) -> list[Thread]:
@@ -353,9 +366,6 @@ class ChatService:
         grouped = group_by_turn(frames)
         turns = [t.to_dict() for t in self._turns.get(thread_id, [])]
         approvals = [record.to_dict() for record in self._broker.approvals()]
-        approval_by_turn = attach_approvals(
-            [f for f in frames if f.get("approval") is not None]
-        )
         latest = latest_status_by_turn(frames)
         return {
             "approvals": approvals,
@@ -393,12 +403,15 @@ class ChatService:
             if frame_item["event_type"] == MonitorEventType.HEARTBEAT:
                 continue
             yield frame_item
-            if frame_item.get("turn_id") == started["turn_id"] and frame_item[
-                "event_type"
-            ] in TERMINAL_FRAME_EVENTS:
+            if (
+                frame_item.get("turn_id") == started["turn_id"]
+                and frame_item["event_type"] in TERMINAL_FRAME_EVENTS
+            ):
                 return
 
-    async def post_turn(self, thread_id: str, text: str, *, turn_id: str | None = None) -> int:
+    async def post_turn(
+        self, thread_id: str, text: str, *, turn_id: str | None = None
+    ) -> int:
         """background pump で turn を走らせ、起跑 frame dict を返す（SSE client 用）."""
         thread = self._require_thread(thread_id)
         return await self._start_turn(thread, text, turn_id=turn_id)
@@ -414,17 +427,25 @@ class ChatService:
     ) -> AsyncIterator[dict[str, Any]]:
         """run 系列 frame を replay + live で購読する（AG-UI run SSE 用）."""
         thread = self._require_thread(thread_id)
-        limit = max_frames if max_frames is not None else self._settings.max_frames_per_thread
+        limit = (
+            max_frames
+            if max_frames is not None
+            else self._settings.max_frames_per_thread
+        )
         count = 0
-        async for frame_item in self.subscribe_frames(thread_id, next_seq=next_seq, turn_id=turn_id):
+        async for frame_item in self.subscribe_frames(
+            thread_id, next_seq=next_seq, turn_id=turn_id
+        ):
             if frame_item["event_type"] == MonitorEventType.HEARTBEAT:
                 yield frame_item
                 continue
             yield frame_item
             count += 1
-            if stop_at_terminal and frame_item.get("turn_id") == turn_id and frame_item[
-                "event_type"
-            ] in TERMINAL_FRAME_EVENTS:
+            if (
+                stop_at_terminal
+                and frame_item.get("turn_id") == turn_id
+                and frame_item["event_type"] in TERMINAL_FRAME_EVENTS
+            ):
                 return
             if count >= limit:
                 yield self._publish_monitor(
@@ -442,7 +463,9 @@ class ChatService:
                 )
                 return
 
-    async def cancel_turn(self, thread_id: str, *, reason: str = "client_disconnected") -> dict[str, Any]:
+    async def cancel_turn(
+        self, thread_id: str, *, reason: str = "client_disconnected"
+    ) -> dict[str, Any]:
         """進行中 turn を中断し cancel frame を返す（README §10.3 クライアント切断）."""
         thread = self._require_thread(thread_id)
         turn_id = self._active_turns.get(thread_id)
@@ -481,7 +504,9 @@ class ChatService:
 
     # ------------------------------------------------------------------ HITL 承認
 
-    def approvals(self, *, thread_id: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+    def approvals(
+        self, *, thread_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
         """PermissionBroker の approval record 一覧 (§10.3 /approvals 相当)."""
         session_id = None
         if thread_id is not None:
@@ -492,7 +517,9 @@ class ChatService:
             out = [item for item in out if item["status"] == status]
         return out
 
-    def pending_approvals(self, *, thread_id: str | None = None) -> list[dict[str, Any]]:
+    def pending_approvals(
+        self, *, thread_id: str | None = None
+    ) -> list[dict[str, Any]]:
         return self.approvals(thread_id=thread_id, status="pending")
 
     def approval(self, approval_id: str) -> dict[str, Any]:
@@ -535,7 +562,9 @@ class ChatService:
             )
         return record.to_dict()
 
-    async def resolve_many(self, approval_ids: Iterable[str], *, approved: bool, decided_by: str = "policy") -> list[dict[str, Any]]:
+    async def resolve_many(
+        self, approval_ids: Iterable[str], *, approved: bool, decided_by: str = "policy"
+    ) -> list[dict[str, Any]]:
         """session 断絶/timeout で pending 一括解決（§6.5 stale 処理）."""
         records = await self._broker.resolve_many(
             list(approval_ids), approved=approved, decided_by=decided_by
