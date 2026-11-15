@@ -35,6 +35,7 @@ from app.services.exceptions import (
     UnknownTurnError,
 )
 from app.services.hub import ApprovalBroadcaster, MonitorHub
+from app.services.permissions_api import PermissionBrokerFacade
 from app.services.rules import RuleStore
 from app.services.session_events import (
     MonitorEventType,
@@ -179,8 +180,14 @@ class ChatService:
         self._settings = settings if settings is not None else load_settings()
         self._owns_runtime = runtime is None
         self._runtime = runtime if runtime is not None else AgentRuntime(self._settings)
+        # chat glue が呼ぶ approvals(session_id=...) / resolve_permission は
+        # permissions_api.PermissionBrokerFacade 側の名前 (§4/§5)。
         self._broker = (
-            broker if broker is not None else PermissionBroker(self._settings)
+            broker
+            if broker is not None
+            else PermissionBrokerFacade(
+                timeout_seconds=self._settings.permission_timeout_seconds
+            )
         )
         self._rules = rules if rules is not None else RuleStore()
         self._logs = logs if logs is not None else ConversationLog()
