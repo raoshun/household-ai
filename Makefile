@@ -76,14 +76,16 @@ fmt: ## host の git 管理 source を image 内の ruff で format (repo を /m
 # data volume / host gateway / gate の working tree ro mount / proof state の /tmp) を
 # claim として機械検証する。expand だけ host の docker compose を使い (gate container には
 # docker CLI が無い)、claims 検査の code は pinned image 内で実行する。
-# expand は --env-file /dev/null で host env の影響を排除し、compose 側の既定値だけを検証する。
+# expand は --profile checks / --profile ui の両方を選択して 5 service すべてを含め
+# (ui profile の api を省くと claims が測れない)、--env-file /dev/null で host env の
+# 影響を排除し、compose 側の既定値だけを検証する。
 COMPOSE_CLAIM_TMP ?= .local/compose-claims
 COMPOSE_CLAIM_MOUNTS = -v $(CURDIR)/$(COMPOSE_CLAIM_TMP):/gate:ro -v $(CURDIR)/tests:/app/tests:ro -v $(CURDIR)/$(COMPOSE_CLAIM_TMP)/out:/out
-COMPOSE_CLAIM_TAMPER_MODES ?= literal-credential bind-data-dir unprofiled-gate baked-secret-in-image
+COMPOSE_CLAIM_TAMPER_MODES ?= literal-credential bind-data-dir unprofiled-gate baked-secret-in-image ui-bridge-state-mounted ui-port-wildcard
 
 compose-claims-stage: ## claims 検証に必要な compose / Dockerfile / .dockerignore / expand を staging
 	@mkdir -p $(COMPOSE_CLAIM_TMP)/backend $(COMPOSE_CLAIM_TMP)/out $(EVIDENCE)
-	@$(COMPOSE) -f docker-compose.yml --profile checks --env-file /dev/null config --format json > $(COMPOSE_CLAIM_TMP)/compose-config.json
+	@$(COMPOSE) -f docker-compose.yml --profile checks --profile ui --env-file /dev/null config --format json > $(COMPOSE_CLAIM_TMP)/compose-config.json
 	@cp docker-compose.yml $(COMPOSE_CLAIM_TMP)/docker-compose.yml
 	@cp backend/Dockerfile $(COMPOSE_CLAIM_TMP)/backend/Dockerfile
 	@cp .dockerignore $(COMPOSE_CLAIM_TMP)/.dockerignore
@@ -95,7 +97,7 @@ prove-compose-claims: compose-claims-stage ## README §13 compose claims を exp
 	@cp $(COMPOSE_CLAIM_TMP)/out/compose-claims.json $(EVIDENCE)/compose-claims.json
 	@echo "claims evidence: $(EVIDENCE)/compose-claims.json"
 
-prove-compose-claims-tamper: compose-claims-stage ## 4 とおり compose defect を claims guard が検出することを実証 (negative gate)
+prove-compose-claims-tamper: compose-claims-stage ## 6 とおり compose defect を claims guard が検出することを実証 (negative gate)
 	@failures=0; for mode in $(COMPOSE_CLAIM_TAMPER_MODES); do \
 	  echo "[compose-claims-tamper] $$mode"; \
 	  $(DOCKER) run --platform linux/amd64 --rm \

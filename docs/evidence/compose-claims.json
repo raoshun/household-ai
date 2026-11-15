@@ -4,23 +4,23 @@
   "claims": [
     {
       "claim": "phase0_compose_service_set",
-      "measured": "services=[\"gate\", \"proof\", \"runtime\"] default_up=[\"runtime\"] profiles={\"gate\": [\"checks\"], \"proof\": [\"checks\"], \"runtime\": []}"
+      "measured": "services=[\"api\", \"gate\", \"proof\", \"runtime\", \"ui-bridge\"] default_up=[\"runtime\"] profiles={\"api\": [\"ui\"], \"gate\": [\"checks\"], \"proof\": [\"checks\"], \"runtime\": [], \"ui-bridge\": [\"checks\"]}"
     },
     {
       "claim": "single_pinned_image",
-      "measured": "{\"gate\": \"household-ai-runtime-test:0.1.0\", \"proof\": \"household-ai-runtime-test:0.1.0\", \"runtime\": \"household-ai-runtime-test:0.1.0\"}"
+      "measured": "{\"api\": \"household-ai-runtime-test:0.1.0\", \"gate\": \"household-ai-runtime-test:0.1.0\", \"proof\": \"household-ai-runtime-test:0.1.0\", \"runtime\": \"household-ai-runtime-test:0.1.0\", \"ui-bridge\": \"household-ai-runtime-test:0.1.0\"}"
     },
     {
       "claim": "credentials_not_baked",
-      "measured": "compose literals=[] expanded={\"gate\": {\"AI_API_KEY\": {\"present\": false, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"proof\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"runtime\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}}"
+      "measured": "compose literals=[] expanded={\"api\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"gate\": {\"AI_API_KEY\": {\"present\": false, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"proof\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"runtime\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}, \"ui-bridge\": {\"AI_API_KEY\": {\"present\": true, \"value_class\": \"placeholder\"}, \"COPILOT_GITHUB_TOKEN\": {\"present\": true, \"value_class\": \"placeholder\"}, \"GH_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}, \"GITHUB_TOKEN\": {\"present\": false, \"value_class\": \"placeholder\"}}}"
     },
     {
       "claim": "data_volume_mount",
-      "measured": "named_volumes=[\"household-data\"] runtime=[\"household-data:/app/data:rw\"]"
+      "measured": "named_volumes=[\"household-data\"] runtime=[\"household-data:/app/data:rw\"] api=[\"household-data:/app/data:rw\"]"
     },
     {
       "claim": "host_ollama_gateway",
-      "measured": "{\"gate\": [], \"proof\": [\"host.docker.internal=host-gateway\"], \"runtime\": [\"host.docker.internal=host-gateway\"]}"
+      "measured": "{\"api\": [\"host.docker.internal=host-gateway\"], \"gate\": [], \"proof\": [\"host.docker.internal=host-gateway\"], \"runtime\": [\"host.docker.internal=host-gateway\"], \"ui-bridge\": [\"host.docker.internal=host-gateway\"]}"
     },
     {
       "claim": "gate_uses_working_tree_ro",
@@ -33,32 +33,53 @@
     {
       "claim": "secrets_and_data_excluded_from_image",
       "measured": "excluded=[\"*.py[oc]\", \"*.zcode.*\", \".env\", \".env.*\", \".git\", \".github\", \".pytest_cache/\", \".ruff_cache/\", \".spike/\", \".venv*/\", \".venv/\", \"__pycache__/\", \"copilot-runtime/\", \"data/\", \"frontmatter.json\", \"installed-plugins/\", \"logs/\", \"session-state/\"] copy_sources=[\"./\", \"./README.md\", \"./app\", \"/app/docs/pinned-runtime-versions.json\", \"/app/skills\", \"/app/tests\", \"backend/README.md\", \"backend/app\", \"backend/pyproject.toml\", \"backend/uv.lock\", \"docs/pinned-runtime-versions.json\", \"skills\", \"tests\"]"
+    },
+    {
+      "claim": "ui_bridge_state_and_mounts",
+      "measured": "state={\"COPILOT_RUNTIME_DIR\": \"/tmp/ui-proof-runtime\", \"DATA_DIR\": \"/tmp/ui-proof-data\"} mounts={\"/app/backend/app\": {\"source\": \"<repo>/backend/app\", \"mode\": \"ro\", \"named\": false}, \"/app/tests\": {\"source\": \"<repo>/tests\", \"mode\": \"ro\", \"named\": false}, \"/out\": {\"source\": \"<repo>/.local/ui/out\", \"mode\": \"rw\", \"named\": false}} command=timeout 1200 sh -c .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short --import-mode=importlib -rf"
+    },
+    {
+      "claim": "ui_published_ports_loopback_only",
+      "measured": "api ports=[\"127.0.0.1:8000->8000/tcp mode=ingress\"] all_ports={\"api\": [\"127.0.0.1:8000->8000/tcp mode=ingress\"], \"gate\": [], \"proof\": [], \"runtime\": [], \"ui-bridge\": []}"
     }
   ],
   "measured": {
     "services": [
+      "api",
       "gate",
       "proof",
-      "runtime"
+      "runtime",
+      "ui-bridge"
     ],
     "default_up_services": [
       "runtime"
     ],
     "profiled_services": {
+      "api": [
+        "ui"
+      ],
       "gate": [
         "checks"
       ],
       "proof": [
         "checks"
       ],
-      "runtime": []
+      "runtime": [],
+      "ui-bridge": [
+        "checks"
+      ]
     },
     "service_images": {
+      "api": "household-ai-runtime-test:0.1.0",
       "gate": "household-ai-runtime-test:0.1.0",
       "proof": "household-ai-runtime-test:0.1.0",
-      "runtime": "household-ai-runtime-test:0.1.0"
+      "runtime": "household-ai-runtime-test:0.1.0",
+      "ui-bridge": "household-ai-runtime-test:0.1.0"
     },
     "service_volumes": {
+      "api": [
+        "household-data:/app/data:rw"
+      ],
       "gate": [
         "<repo>/backend/app:/app/backend/app:ro",
         "<repo>/tests:/app/tests:ro"
@@ -66,24 +87,61 @@
       "proof": [],
       "runtime": [
         "household-data:/app/data:rw"
+      ],
+      "ui-bridge": [
+        "<repo>/.local/ui/out:/out:rw",
+        "<repo>/backend/app:/app/backend/app:ro",
+        "<repo>/tests:/app/tests:ro"
       ]
     },
     "named_volumes": [
       "household-data"
     ],
-    "named_volume_mounts": [
-      "household-data:/app/data"
-    ],
+    "named_volume_mounts": {
+      "api": [
+        "household-data:/app/data"
+      ],
+      "gate": [],
+      "proof": [],
+      "runtime": [
+        "household-data:/app/data"
+      ],
+      "ui-bridge": []
+    },
     "extra_hosts": {
+      "api": [
+        "host.docker.internal=host-gateway"
+      ],
       "gate": [],
       "proof": [
         "host.docker.internal=host-gateway"
       ],
       "runtime": [
         "host.docker.internal=host-gateway"
+      ],
+      "ui-bridge": [
+        "host.docker.internal=host-gateway"
       ]
     },
     "credential_env": {
+      "api": {
+        "AI_API_KEY": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "COPILOT_GITHUB_TOKEN": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "GH_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        }
+      },
       "gate": {
         "AI_API_KEY": {
           "present": false,
@@ -137,6 +195,24 @@
           "present": false,
           "value_class": "placeholder"
         }
+      },
+      "ui-bridge": {
+        "AI_API_KEY": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "COPILOT_GITHUB_TOKEN": {
+          "present": true,
+          "value_class": "placeholder"
+        },
+        "GH_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        },
+        "GITHUB_TOKEN": {
+          "present": false,
+          "value_class": "placeholder"
+        }
       }
     },
     "proof_state_dirs": {
@@ -144,8 +220,41 @@
       "DATA_DIR": "/tmp/proof-data"
     },
     "runtime_dir_env": {
-      "proof": "/tmp/proof-runtime"
+      "proof": "/tmp/proof-runtime",
+      "ui-bridge": "/tmp/ui-proof-runtime"
     },
+    "ui_bridge_mounts": {
+      "/app/backend/app": {
+        "source": "<repo>/backend/app",
+        "mode": "ro",
+        "named": false
+      },
+      "/app/tests": {
+        "source": "<repo>/tests",
+        "mode": "ro",
+        "named": false
+      },
+      "/out": {
+        "source": "<repo>/.local/ui/out",
+        "mode": "rw",
+        "named": false
+      }
+    },
+    "published_ports": {
+      "api": [
+        "127.0.0.1:8000->8000/tcp mode=ingress"
+      ],
+      "gate": [],
+      "proof": [],
+      "runtime": [],
+      "ui-bridge": []
+    },
+    "ui_bridge_state_dirs": {
+      "COPILOT_RUNTIME_DIR": "/tmp/ui-proof-runtime",
+      "DATA_DIR": "/tmp/ui-proof-data"
+    },
+    "ui_bridge_evidence_dir": "/out",
+    "ui_bridge_command": "timeout 1200 sh -c .venv/bin/python -m pytest tests/live -q -p no:cacheprovider --tb=short --import-mode=importlib -rf",
     "gate_python_path": "",
     "compose_credential_literals": [],
     "dockerfile_copy_sources": [
