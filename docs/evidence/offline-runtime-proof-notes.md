@@ -158,16 +158,21 @@ built-in tool への deny 応答は built-in tool が 1 件も起動しなかっ
 
 | target | 何を走らせるか | evidence |
 | :--- | :--- | :--- |
-| `compose-claims-stage` | host の `docker compose --profile checks --env-file /dev/null config --format json` で展開 JSON を `.local/compose-claims/` へ staging し、検査用の compose / Dockerfile / .dockerignore copy を置く | (staging のみ。git 外) |
-| `prove-compose-claims` | pinned image 内で claims 8 件を検査 | `compose-claims.json` |
-| `prove-compose-claims-tamper` | 壊した copy に対して同じ検査を 4 case 実行し、guard が defect を拒否することを実証 | `compose-claims-tamper-<mode>.json` (4 件) |
+| `compose-claims-stage` | host の `docker compose --profile checks --profile ui --env-file /dev/null config --format json` で展開 JSON を `.local/compose-claims/` へ staging し、検査用の compose / Dockerfile / .dockerignore copy を置く | (staging のみ。git 外) |
+| `prove-compose-claims` | pinned image 内で claims 10 件を検査 | `compose-claims.json` |
+| `prove-compose-claims-tamper` | 壊した copy に対して同じ検査を 6 case 実行し、guard が defect を拒否することを実証 | `compose-claims-tamper-<mode>.json` (6 件) |
 
-claims 8 件 (id 順): `phase0_compose_service_set` / `single_pinned_image` /
+claims 10 件 (id 順): `phase0_compose_service_set` / `single_pinned_image` /
 `credentials_not_baked` / `data_volume_mount` / `host_ollama_gateway` /
 `gate_uses_working_tree_ro` / `proof_state_in_container_tmp` /
-`secrets_and_data_excluded_from_image`。
+`secrets_and_data_excluded_from_image` / `ui_bridge_state_and_mounts` /
+`ui_published_ports_loopback_only`。
 
-tamper 4 case (`--tamper <mode>`) と検出 claim:
+`credentials_not_baked` は compose 内 literal のうち credential 形状 (API key / token 等の
+変数名と secret 形状の値) だけを対象とする。`CONTEXT_TOKEN_WARNING_RATIO: "0.8"` のような
+設定値は secret として数えない。
+
+tamper 6 case (`--tamper <mode>`) と検出 claim:
 
 | tamper mode | 壊す内容 | 検出する claim |
 | :--- | :--- | :--- |
@@ -175,6 +180,8 @@ tamper 4 case (`--tamper <mode>`) と検出 claim:
 | `bind-data-dir` | named volume を `./data` bind mount へ差し替える | `data_volume_mount` |
 | `unprofiled-gate` | gate の profile を外して default up に入れる | `phase0_compose_service_set` |
 | `baked-secret-in-image` | `.env` / data dir を COPY する Dockerfile に差し替える | `secrets_and_data_excluded_from_image` |
+| `ui-bridge-state-mounted` | ui-bridge の proof state を container `/tmp` ではなく host mount へ差し替える | `ui_bridge_state_and_mounts` |
+| `ui-port-wildcard` | api の published port を `127.0.0.1:8000:8000` から `8000:8000` (wildcard) へ緩める | `ui_published_ports_loopback_only` |
 
 evidence の host path について: gate は host repo root を `<repo>` へ mask してから書く
 (`redact_host_paths` / `write_evidence`)。mask 後の payload に host root が残っている場合は
@@ -190,6 +197,10 @@ evidence file を読む test は置かない)。
 - expand は `--env-file /dev/null` なので、展開値は compose file の既定値 / placeholder
   (`AI_API_KEY: "local-dummy"`, `COPILOT_GITHUB_TOKEN: ""`) であり、host の実 env を反映しない。
 - §4 の live proof 同様、built-in tool への deny 応答は実測未取得 (unit test 検証)。
+- `api` / `ui-bridge` の claims (9・10 件め) は展開構成の値までを検査する。`backend/app/main.py`
+  と `tests/live/` が未実装のため、両 service は実際には起動しない (起動証跡は次の track で取る)。
+  staging で expand する際は profiles `checks` に加え `ui` を足して api / ui-bridge を検査対象に
+  含める (compose の ui-bridge が host 側 `.local/ui/out` を生成するが `.local/` は git 外)。
 
 ## 7. live proof claims gate (2 case の tool 登録境界)
 

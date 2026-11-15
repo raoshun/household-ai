@@ -1111,12 +1111,16 @@ Python SDKが提供するCLI同梱方式を優先する。
 
 Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 の frontend / backend は、
 初期段階では runtime 1 service に集約し (frontend は Phase 3)、検証用 service を profile で分離する。
+`api` / `ui-bridge` は Phase 1 の UI ブリッジ用で profile 分離のため既存 track の挙動は変えない
+(実装は未完了。下記の局限参照)。
 
 | service | profile | image | 用途 |
 | :--- | :--- | :--- | :--- |
 | `runtime` | 無し (default up) | `household-ai-runtime-test:0.1.0` | API / Agent 実行。`household-data` named volume を `/app/data` へ mount |
 | `gate` | `checks` | 同上 | lint / test / claims 検査。working tree を `:ro` で mount |
 | `proof` | `checks` | 同上 | offline / live の proof 実行。session store と runtime cache は `/tmp` 退避 |
+| `api` | `ui` | 同上 | Phase 1 の HTTP API (`uvicorn app.main:app`)。`127.0.0.1:8000` のみへ publish し `household-data` を mount |
+| `ui-bridge` | `checks` | 同上 | Phase 1 の UI ブリッジ live test (`pytest tests/live`)。証跡は `/out` (host の `.local/ui/out`)、状態は `/tmp` 退避。published port 無し |
 
 永続化は named volume `household-data` で行う (13.2 の「ホスト側のディレクトリ」は docker が
 管理する named volume 実装とし、`./data` の bind mount は使わない)。model への outbound は
@@ -1127,18 +1131,21 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 
 | 検証 | target | 証跡 |
 | :--- | :--- | :--- |
-| pin 照合 (build 時) | `make gate` | `docs/pinned-runtime-versions.json` |
+| pin 照合 (build 時: Dockerfile 内 verify_pinned_manifest.py) | `make build` | `docs/pinned-runtime-versions.json` |
+| pin 照合 (host venv 実測照合) | `make verify-pinned` | `docs/pinned-runtime-versions.json` |
 | lint / unit test | `make lint test` | (ログのみ) |
 | offline cache / runtime | `make prove-offline` | `offline-runtime-proof.json` ほか 2 件 |
 | negative gate (guard が defect を検出) | `make prove-negative-gates` | `negative-gates.md` |
-| compose 構成 claims (8 claims) | `make gate-compose-claims` | `compose-claims.json`, `compose-claims-tamper-*.json` |
+| compose 構成 claims (10 claims / tamper 6 とおり) | `make gate-compose-claims` | `compose-claims.json`, `compose-claims-tamper-*.json` (6 件) |
 | live proof 2 case claims (22 checks) | `make prove-live-proof-claims` | `live-proof-two-cases.json` を container `/out` 経由で evidence へ |
 | live proof claims gate 再検証 | `make gate-live-proof-claims` | `live-proof-two-cases.json` + `test_live_proof_summary.py` (29 tests) |
 
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
 Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを
 対象とする (expand 生成は gate image に docker CLI が無いため host 側)、built-in tool への deny 応答は
-実測未取得 (unit test 検証)。
+実測未取得 (unit test 検証)。`api` / `ui-bridge` は構成 (profile・mount・port・state 退避) までで、
+`backend/app/main.py` と `tests/live/` が未実装のため起動しない。frontend の UI と contract test
+(vitest) は未作成 (docs/plan/2026-11-11-phase0-ui-implementation-contract.md §8・§14 が要求)。
 
 ---
 
