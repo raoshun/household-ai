@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from app.clock import tokyo_iso
 from app.services.exceptions import (
     InvalidRequestError,
     TurnIdConflictError,
+    UnknownThreadError,
     UnknownTurnError,
 )
 
@@ -26,6 +28,7 @@ AUDIT_KINDS = (
 _KNOWN_STOP_REASONS = (
     "aborted",
     "end_turn",
+    "interrupted",
     "permission_required",
     "send_failed",
     "tool_not_executed",
@@ -35,9 +38,18 @@ _KNOWN_STOP_REASONS = (
 # turn の lifecycle state (§3 frame 系列と §4 busy/conflict 判定の正)。queued は
 # 受付済みで pump 未開始、started は実行中。terminal 化は complete_turn 只在。
 _ACTIVE_TURN_STATUSES = ("queued", "started")
+_TERMINAL_TURN_STATUSES = (
+    "completed",
+    "cancelled",
+    "interrupted",
+    "failed",
+    "timed_out",
+)
+_ALL_TURN_STATUSES = _ACTIVE_TURN_STATUSES + _TERMINAL_TURN_STATUSES
 _TERMINAL_STATUS_BY_STOP_REASON = {
     "aborted": "cancelled",
     "end_turn": "completed",
+    "interrupted": "interrupted",
     "permission_required": "interrupted",
     "send_failed": "failed",
     "tool_not_executed": "failed",
@@ -113,6 +125,54 @@ class ConversationLog:
         self._turn_order: list[str] = []
         self._turn_ids_by_conversation: dict[str, list[str]] = {}
         self._processed_turn_by_session: dict[str, int] = {}
+        self._conversation_titles: dict[str, str] = {}
+
+    # ------------------------------------------------------------------
+    # §9.2 会話保持の family 操作 (list/read/rename/interrupt/delete)
+    # ------------------------------------------------------------------
+
+    def new_conversation_id(self) -> str:
+        return f"conv-{uuid4().hex[:12]}"
+
+    def start_conversation(
+        self, conversation_id: str, *, title: str | None = None
+    ) -> None:
+        self._turn_ids_by_conversation.setdefault(conversation_id, [])
+        if title:
+            self._conversation_titles[conversation_id] = title
+
+    def rename_conversation(self, conversation_id: str, title: str) -> None:
+        if conversation_id not in self._turn_ids_by_conversation:
+            raise UnknownThreadError(thread_id=conversation_id)
+        self._conversation_titles[conversation_id] = title
+
+    def conversation_title(self, conversation_id: str) -> str | None:
+        return self._conversation_titles.get(conversation_id)
+
+    def delete_conversation(self, conversation_id: str) -> None:
+        for turn_id in self._turn_ids_by_conversation.pop(conversation_id, []):
+            turn = self._turns.pop(turn_id, None)
+            if turn is not None and turn.session_id:
+                self._processed_turn_by_session.pop(turn.session_id, None)
+        self._messages.pop(conversation_id, None)
+        self._conversation_titles.pop(conversation_id, None)
+        self._turn_order = [tid for tid in self._turn_order if tid in self._turns]
+
+    def interrupt_turn(
+        self, turn_id: str, *, reason: str | None = None
+    ) -> ConversationTurn:
+        """family 操作の interrupt (§9.2)。未完了 turn を interrupted 化する。"""
+        turn = self._turns.get(turn_id)
+        if turn is None:
+            raise UnknownTurnError(turn_id=turn_id)
+        if turn.status not in _ACTIVE_TURN_STATUSES:
+            return turn
+        return self.complete_turn(
+            turn_id,
+            stop_reason="interrupted",
+            status="interrupted",
+            error={"code": "interrupted", "message": reason or "family interrupt"},
+        )
 
     def start_turn(
         self,
@@ -243,6 +303,7 @@ class ConversationLog:
         content: str,
         created_at: str | None = None,
         source: str = "chat",
+        turn_id: str | None = None,
     ) -> dict[str, Any]:
         entry = {
             "content": content,
@@ -250,6 +311,9 @@ class ConversationLog:
             "role": role,
             "source": source,
         }
+        if turn_id is not None:
+            # §11 join: message 行から ConversationTurn.turn_id へ遡れるようにする
+            entry["turn_id"] = turn_id
         self._messages.setdefault(conversation_id, []).append(entry)
         return entry
 
@@ -261,6 +325,7 @@ class ConversationLog:
         error: dict[str, Any] | None = None,
         judgment_id: str | None = None,
         usage: dict[str, Any] | None = None,
+        status: str | None = None,
     ) -> ConversationTurn:
         turn = self._turns.get(turn_id)
         if turn is None:
@@ -270,7 +335,11 @@ class ConversationLog:
             msg = f"未知の stop_reason: {stop_reason}"
             raise ValueError(msg)
         turn.stop_reason = stop_reason
-        turn.status = _TERMINAL_STATUS_BY_STOP_REASON.get(stop_reason, "completed")
+        turn.status = (
+            status
+            if status in _ALL_TURN_STATUSES and status != "queued"
+            else _TERMINAL_STATUS_BY_STOP_REASON.get(stop_reason, "completed")
+        )
         turn.error = error
         turn.judgment_id = judgment_id
         turn.usage = usage
