@@ -30,6 +30,7 @@ from app.services.exceptions import (
     ConcurrencyLimitError,
     ForkNotFoundError,
     ThreadClosedError,
+    TurnInProgressError,
     UnknownApprovalError,
     UnknownResolverError,
     UnknownThreadError,
@@ -54,9 +55,6 @@ TERMINAL_TYPES: frozenset[AgentEventType] = frozenset(
     {AgentEventType.SESSION_ERROR, AgentEventType.SESSION_IDLE}
 )
 DEFAULT_TITLE = "新しい家族会話"
-DEFAULT_CONCURRENCY_LIMIT = 4
-DEFAULT_MONITOR_REPLAY = 200
-DEFAULT_MONITOR_HEARTBEAT_SECONDS = 10.0
 TERMINAL_FRAME_EVENTS: frozenset[str] = frozenset(
     {
         MonitorEventType.RUN_CANCELLED,
@@ -172,6 +170,9 @@ class ChatService:
     ChatService が ``_publish_monitor`` 経由で払い出す。hub へも同じ ``event_id``
     で写しを publish するため、UI 側は ``dedupe_frames`` / ``merge_frames`` で
     monitor SSE と thread frames を join できる。
+
+    contract §7 の設定値 (``monitor_replay_limit`` / ``monitor_heartbeat_seconds``
+    / ``max_concurrent_turns``) は ``__init__`` で実際の処理へ結線する。
     """
 
     def __init__(
@@ -185,7 +186,7 @@ class ChatService:
         audit: AuditTrail | None = None,
         hub: MonitorHub | None = None,
         settings: Settings | None = None,
-        monitor_heartbeat_seconds: float = DEFAULT_MONITOR_HEARTBEAT_SECONDS,
+        monitor_heartbeat_seconds: float | None = None,
     ) -> None:
         self._settings = settings if settings is not None else load_settings()
         self._owns_runtime = runtime is None
@@ -204,7 +205,9 @@ class ChatService:
         self._judgments = judgments if judgments is not None else JudgmentStore()
         self._audit = audit if audit is not None else AuditTrail()
         self._hub = (
-            hub if hub is not None else MonitorHub(replay_limit=DEFAULT_MONITOR_REPLAY)
+            hub
+            if hub is not None
+            else MonitorHub(replay_limit=self._settings.monitor_replay_limit)
         )
         self._approvals = ApprovalBroadcaster(self._hub)
         self._threads: dict[str, Thread] = {}
@@ -224,7 +227,12 @@ class ChatService:
         self._turn_seq: dict[str, int] = {}
         self._tool_ctx: dict[str, RuleToolContext] = {}
         self._last_usage: dict[str, dict[str, Any]] = {}
-        self._monitor_heartbeat = monitor_heartbeat_seconds
+        self._monitor_heartbeat = (
+            self._settings.monitor_heartbeat_seconds
+            if monitor_heartbeat_seconds is None
+            else monitor_heartbeat_seconds
+        )
+        self._max_concurrent_turns = max(self._settings.max_concurrent_turns, 1)
         self._started = False
         self._reaper: asyncio.Task[None] | None = None
 
@@ -300,6 +308,28 @@ class ChatService:
             history = deque(maxlen=max(self._settings.max_frames_per_thread, 1))
             self._frames[thread_id] = history
         return history
+
+    def _require_turn_capacity(self, thread: Thread) -> None:
+        """新しいターンを開始して良いか max_concurrent_turns で確かめる (§4/§7).
+
+        thread 単位の busy と service 全体の同時実行上限を順に確かめる。ターン
+        開始そのものは Phase 1 側実装のため、ここでは受け入れ可否だけを契約
+        通りの exception で断る。
+
+        Args:
+            thread: ターンを開始しようとしている thread.
+
+        Raises:
+            TurnInProgressError: 同じ thread ですでにターンが動いている場合 (409)。
+            ConcurrencyLimitError: 同時実行ターンが上限へ達している場合 (429)。
+        """
+        running_turn_id = self._active_turns.get(thread.thread_id)
+        if running_turn_id is not None:
+            raise TurnInProgressError(turn_id=running_turn_id)
+        if len(self._active_turns) >= self._max_concurrent_turns:
+            raise ConcurrencyLimitError(
+                running_turn_ids=sorted(self._active_turns.values())
+            )
 
     def _publish_monitor(
         self,
@@ -662,6 +692,7 @@ class ChatService:
     ) -> AsyncIterator[dict[str, Any]]:
         """1 turn を実行し frame series を yield する（terminal frame で閉じる）."""
         thread = self._require_thread(thread_id)
+        self._require_turn_capacity(thread)
         started = await self._start_turn(thread, text, turn_id=turn_id)
         yield started
         async for frame_item in self.subscribe_frames(
@@ -683,6 +714,7 @@ class ChatService:
     ) -> dict[str, Any]:
         """background pump で turn を走らせ、起跑 frame dict を返す（SSE client 用）."""
         thread = self._require_thread(thread_id)
+        self._require_turn_capacity(thread)
         return await self._start_turn(thread, text, turn_id=turn_id)
 
     async def subscribe_run(
