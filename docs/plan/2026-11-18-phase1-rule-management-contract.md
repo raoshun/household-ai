@@ -96,7 +96,7 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.14 | Phase 0 との境界 | hub の `services/rules.py` / `services/tools.py` は残置し、hub vocabulary と README vocabulary を adapter で橋渡しする。hub 内部 API・frames・grant 契約を変えない。 | README §13.4 実装済み構成 L1110-1151（api L1122・ui-bridge L1123）、Phase 0 契約 §2 frames L35-57・§5 grant L113-122、hub code `backend/app/services/rules.py` L16-18/L248・`tools.py` L25（HEAD で追跡） |
 | 1.15 | gate 維持 | 既存の gate（`make gate` L52-53）と proof gate（L55-56）、pinned SDK probe（`probe` target L58-59）は変更しない。Phase 1 は rules 用の unit / integration pytest を追加し、`make gate` の既存 checks を狭めない。 | `Makefile` L52-59、§20 L1500-1519 |
 | 1.16 | code 配置 | Phase 1 が新設する backend file は README §3 tree の名前に従う（`main.py` L136、`api/rules.py` L141・`api/approvals.py` L142、`services/rule_service.py` L147・`services/search_service.py` L148、`models/rule.py` L161、`repositories/rule_repository.py` L166、`db/database.py` L171・`db/migrations/` L172）。test は `tests/unit/` L217 と `tests/integration/` L218 へ作る。 | README §3 tree L131-172・L216-219。hub 既存 file は §1 決定 1.14 で残置（差異 D-11、§2.4.4）。 |
-
+| 1.17 | Markdown codec の literal layout | front matter は README §4.2 サンプル L245-268 の literal （delimiter L245/L268、group 空行、配列 item 2 space indent、unquoted ISO `T` timestamp）を application 側 manual writer で書き、scalar と list item の quoting だけ file 単位の `yaml.dump` を使わず 1 値ずつ render する。parser は `---` delimiter を hand-slice で切り、YAML 本文だけ `yaml.safe_load` へ渡す。PyYAML の document 出力と Pydantic の dump を正本文の layout generator にしない。body は `#` 見出し 4 節の literal を保持する | README §4.2 L244-285、実測 §2.4.5、差異 D-12 |
 ## 2. Phase 1 契約
 
 ### 2.1 SQLite スキーマ
@@ -161,10 +161,36 @@ Phase 1 で追加する属性（README の属性一覧に無いが、他の節�
 
 #### 2.4.4 backend code 配置（README §3 L131-172・L216-219 と hub HEAD）
 
-- Phase 1 が新設する file は README §3 の tree の名前に従う: `backend/app/main.py`（L136）、`api/rules.py`（L141）・`api/approvals.py`（L142）、`services/rule_service.py`（L147）・`services/search_service.py`（L148）、`models/rule.py`（L161）、`repositories/rule_repository.py`（L166）、`db/database.py`（L171）と `db/migrations/`（L172）。`api/history.py`（L143）と chat 系の file、`agent/`（L152-158）は Phase 1 では作らない（§1 決定 1.12）。
+- Phase 1 が new spec の file 名で新設する先は README §3 tree の実測行に従う: `backend/app/main.py`（L136）、`api/rules.py`（L141）・`api/approvals.py`（L142）・`api/history.py`（L143）、`services/rule_service.py`（L147）・`services/search_service.py`（L148）・`services/approval_service.py`（L149）、`models/rule.py`（L161）、`repositories/rule_repository.py`（L166）。README の `db/` は `database.py`（L171）と `migrations/`（L172）のみを挙げるので、Phase 1 の schema 定義は `db/migrations/` 配下の .sql file に置き、README に無い `db/schema.py` は作らない。README tree の file 群は hub に存在しない（次 bullet の実測 17 file）。
 - これらの file は HEAD に存在しない（`git ls-files backend` で 0 件）。hub 既存の `services/rules.py`・`services/tools.py`・`services/chat.py` は §1 決定 1.14 で変更せず、rules 側の repository / service が hub の `RuleStore` を呼ぶ adapter で橋渡しする（差異 D-11）。
 - test は README §3 の tree 通り `tests/unit/`（L217）と `tests/integration/`（L218）へ作成する。HEAD に有る `tests/proofs/` は README の tree に無い配置で（`make proof` gate Makefile L55-56 で実行）、Phase 1 の test 配置へ混ぜない。`tests/e2e/`（L219）は Phase 1 では作らない。
 - 実行は pinned image の gate 経由（`make lint` L65-66、`make test` L68-69）。`backend/pyproject.toml` の pytest 設定は container 内 cwd（`backend/`）から `../tests` を指す（`testpaths = ["../tests"]` L49）。host へ pip install しない。
+- hub 資産の実測 inventory（2026-11-19、`git ls-tree -r --name-only origin/main -- backend` の 17 file: `app/__init__.py`・`app/clock.py`・`app/config.py`・`agent/` 5 file・`services/` 9 file）。`api/`・`models/`・`repositories/`・`db/` は 0 file（差異 D-11）で、Phase 1 が新設する。
+
+#### 2.4.5 コーデック実測（pinned image の Python 3.12.12 / PyYAML 6.0.3）
+
+2026-11-19 に pinned image `household-ai-runtime-test:0.1.0`（Makefile L5）内の python3 で実測した（Python 3.12.12、PyYAML 6.0.3、Pydantic 2.14.3、ruff 0.17.4、`sqlite3.sqlite_version` 3.40.1。pinned 版は `backend/pyproject.toml` L5・L12・L15・L24）。README §4.2 サンプル（code fence L244-285）の layout は:
+
+- `---` delimiter L245（open）と L268（close）の間に 13 key、key 群は空行 L249・L252・L255・L258・L262・L265 で 7 group（id/title/category・status/version・rule_type/priority・applicable_to・tags・created_at/updated_at・created_by/approved_by）へ分かれる。
+- 配列 item は parent key より 2 space 深い indent（`applicable_to:` L256→`  - children` L257、`tags:` L259→`  - food` L260・`  - parenting` L261）。
+- timestamp は `2026-11-07T10:00:00+09:00` の ISO 表記（秒精度 + 固定 offset、L263・L264）。
+- 本文は code fence 内で `#` 見出し 4 節 L270-284、fence 閉じ L285。
+
+PyYAML 6.0.3 と Pydantic 2.14.3 の実測:
+
+1. `yaml.dump(value, sort_keys=False, allow_unicode=True)` は block sequence item を column 0 へ出す（`- children` の dash indent 0）。`indent=2` を足しても dash の indent は 0 のまま（README の 2 space indent を再現しない）。
+2. `datetime` は `2026-11-07 10:00:00+09:00`（space 区切り）で dump され、README の `T` 表記にならない。
+3. closing `---` を含む front matter text を `yaml.load` すると `ComposerError: expected a single document in the stream`（README の file layout は closing delimiter を YAML stream 内に持つ L268）。
+4. block sequence 空 list は `key: []`（flow style）として render される。
+5. front matter text の key 順は `yaml.safe_load` で保存される（README サンプル L246-267 を load すると 13 key が §4.3 一覧 L291-303 と同順で返り、`version` は `int`、`applicable_to`・`tags` は `list`）。
+6. unquoted の `2026-11-07T10:00:00+09:00` は `yaml.safe_load` で `datetime`（`timezone(timedelta(seconds=32400))`）に復元され、quoted すると `str` になる。Pydantic の `model_dump_json()` / `model_dump(mode="json")` は datetime を quoted ISO string にする（CJK は escape されず `お菓子の与え方` のまま）。
+
+契約化する handling（§1 決定 1.17）:
+
+- Writer: 13 attribute を README §4.3 一覧の順（L291-303）で書き、group 空行（L249・L252・L255・L258・L262・L265 相当）、配列 item 2 space indent、timestamp は `datetime.isoformat()` の unquoted ISO（README L263-264 相当）を manual writer で出す。quoting だけ 1 値ずつの `yaml.dump` へ委譲する: scalar は `yaml.dump(value, default_flow_style=True, allow_unicode=True, sort_keys=False)`、list item は `yaml.dump([item], default_flow_style=False, sort_keys=False, allow_unicode=True)`（dash indent 0 の 1 行だけ返る）。実測で plain scalar の output 末尾には document end を示す `...` の line が付く（`'plain'` → `'plain\n...\n'`）のでその line を落とし、quoted scalar や 1 要素 list には付かない（`'yes'` → `"'yes'\n"`、`['food']` → `"- 'food'\n"`）。render 結果に newline が残る value（`'a\nb'` → `"'a\n\n  b'\n"`）は front matter の scalar として reject する。
+- Parser: file 先頭の `---` と closing `---` を hand-slice で切り、front matter text（L246-267 相当）を `yaml.safe_load` へ、本文（L270 以降）を body parser へ separate に渡す。
+- 往復の proof（実測済み）: README サンプル front matter block L246-267（22 line）を `yaml.safe_load` → 上記 manual writer で render すると original と byte 一致した（2026-11-19 実測、key 順 README §4.3 L291-303、blank 挿入位置は index 2・4・6・7・8・10 の 後、配列 item は parent の 2 space 下、timestamp は `datetime.isoformat()` の unquoted ISO）。この往復 byte 一致は Phase 1 の test で固定する。
+- Test 配置: render → parse → render の往復が byte 一致することと README サンプル（L246-267 の front matter text と L270-284 の body）の parse は `tests/unit/test_rule_markdown_codec.py`（README §3 L217 の directory）で検証し、`data/rules/<category>/<rule-id>/v<n>.md` への write と read back（§2.4.3・§1 決定 1.10）は `tests/integration/test_rule_markdown_files.py`（README §3 L218 の directory）で検証する。Pydantic model の field 順が README §4.3 一覧 L291-303 の順であることも unit test で assert する。
 
 ### 2.5 検索契約
 
@@ -260,6 +286,7 @@ README §18 L1435「実装時に公式仕様との差異があれば記録する
 | D-09 | version file の命名規約 | 例 L341-347（`v1.md` L344・`v2.md` L345・`v3.md` L346）と L337「ルールの更新時には既存ファイルを上書きせず、変更履歴を残す。」、L349「最新版への参照を管理する。」。規約の明文なし | hub 側は Markdown file を書かない（§2.8 hub 適応層） | Phase 1 は `v<version>.md` を契約とし、README 化は open question Q-01（§2.10.1）で登記 |
 | D-10 | 承認時刻列 | `rule_versions.approved_by` L987・`approvals.reviewed_at` L999 のみ。`approved_at` は README 全体に無し（grep 0 件） | hub `Rule` に `approved_at` L58 あり（Markdown 化しない） | Phase 1 は README 列のみ使い、時刻の生成・保存形式と列の追加要否は open question Q-11（§2.10.1）で #2 へ登記 |
 | D-11 | README §3 の backend file 名と HEAD の code | `main.py` L136・`api/` L139-143・`services/rule_service.py` L147・`models/rule.py` L161・`repositories/rule_repository.py` L166・`db/` L170-172 | hub 実在は `origin/main` の 17 file（`agent/` 5・`services/` 9・`app/__init__.py`・`app/clock.py`・`app/config.py`）で `api/`・`models/`・`repositories/`・`db/` は 0 件。README 名の新設は Phase 1 の工事（決定 1.16） | README の file 名で Phase 1 module を新設し、hub 側は §1 決定 1.14 で残置（§2.4.4）。hub vocabulary との対応は adapter 局所 |
+| D-12 | front matter の YAML literal layout と pinned image の PyYAML 6.0.3 dump 出力 | README §4.2 サンプル L245-268: delimiter L245/L268、group 空行 L249/L252/L255/L258/L262/L265、配列 item 2 space indent L257/L260-L261、unquoted ISO `T` timestamp L263/L264 | 実測: `yaml.dump`（`sort_keys=False`、`allow_unicode=True`）は block sequence item を column 0 へ出す（`indent=2`でも dash indent 0）、`datetime` は `2026-11-07 10:00:00+09:00`（space 区切り）、closing `---` を 含む text の `yaml.load` は `ComposerError: expected a single document in the stream`。Pydantic の dump は datetime を quoted ISO string にする（CJK は escape されない） | §1 決定 1.17 と §2.4.5 の manual writer / hand-slice parser で README の literal を再現し、往復 test を §2.4.5 の配置で固定する |
 
 ### 2.10 再建工事（2026-11-19）
 
