@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Iterable
+from collections import deque
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,19 +30,24 @@ from app.services.exceptions import (
     ConcurrencyLimitError,
     ForkNotFoundError,
     ThreadClosedError,
+    TurnInProgressError,
     UnknownApprovalError,
     UnknownResolverError,
     UnknownThreadError,
     UnknownTurnError,
 )
 from app.services.hub import ApprovalBroadcaster, MonitorHub
+from app.services.permissions_api import PermissionBrokerFacade
 from app.services.rules import RuleStore
 from app.services.session_events import (
+    SESSION_EVENT_FRAME_TYPES,
     MonitorEventType,
+    format_context_usage,
+    frame,
     group_by_turn,
     latest_status_by_turn,
 )
-from app.services.tools import RuleToolContext
+from app.services.tools import RuleToolContext, build_rule_tools
 
 logger = logging.getLogger("household-ai.services.chat")
 
@@ -49,9 +55,6 @@ TERMINAL_TYPES: frozenset[AgentEventType] = frozenset(
     {AgentEventType.SESSION_ERROR, AgentEventType.SESSION_IDLE}
 )
 DEFAULT_TITLE = "新しい家族会話"
-DEFAULT_CONCURRENCY_LIMIT = 4
-DEFAULT_MONITOR_REPLAY = 200
-DEFAULT_MONITOR_HEARTBEAT_SECONDS = 10.0
 TERMINAL_FRAME_EVENTS: frozenset[str] = frozenset(
     {
         MonitorEventType.RUN_CANCELLED,
@@ -161,7 +164,16 @@ def thread_public_id(thread: Thread) -> str:
 
 
 class ChatService:
-    """AG-UI thread + chat session + turn fan-out を 1 か所で管理する."""
+    """AG-UI thread + chat session + turn fan-out を 1 か所で管理する.
+
+    contract §1 の frame series (thread 内で単調 increasing な ``seq``) は
+    ChatService が ``_publish_monitor`` 経由で払い出す。hub へも同じ ``event_id``
+    で写しを publish するため、UI 側は ``dedupe_frames`` / ``merge_frames`` で
+    monitor SSE と thread frames を join できる。
+
+    contract §7 の設定値 (``monitor_replay_limit`` / ``monitor_heartbeat_seconds``
+    / ``max_concurrent_turns``) は ``__init__`` で実際の処理へ結線する。
+    """
 
     def __init__(
         self,
@@ -174,20 +186,28 @@ class ChatService:
         audit: AuditTrail | None = None,
         hub: MonitorHub | None = None,
         settings: Settings | None = None,
-        monitor_heartbeat_seconds: float = DEFAULT_MONITOR_HEARTBEAT_SECONDS,
+        monitor_heartbeat_seconds: float | None = None,
     ) -> None:
         self._settings = settings if settings is not None else load_settings()
         self._owns_runtime = runtime is None
         self._runtime = runtime if runtime is not None else AgentRuntime(self._settings)
+        # chat glue が呼ぶ approvals(session_id=...) / resolve_permission は
+        # permissions_api.PermissionBrokerFacade 側の名前 (§4/§5)。
         self._broker = (
-            broker if broker is not None else PermissionBroker(self._settings)
+            broker
+            if broker is not None
+            else PermissionBrokerFacade(
+                timeout_seconds=self._settings.permission_timeout_seconds
+            )
         )
         self._rules = rules if rules is not None else RuleStore()
         self._logs = logs if logs is not None else ConversationLog()
         self._judgments = judgments if judgments is not None else JudgmentStore()
         self._audit = audit if audit is not None else AuditTrail()
         self._hub = (
-            hub if hub is not None else MonitorHub(replay_limit=DEFAULT_MONITOR_REPLAY)
+            hub
+            if hub is not None
+            else MonitorHub(replay_limit=self._settings.monitor_replay_limit)
         )
         self._approvals = ApprovalBroadcaster(self._hub)
         self._threads: dict[str, Thread] = {}
@@ -197,6 +217,9 @@ class ChatService:
         self._turns: dict[str, list[_TurnRecord]] = {}
         self._turn_by_id: dict[str, _TurnRecord] = {}
         self._messages: dict[str, list[dict[str, Any]]] = {}
+        # thread 別 frame series (ring buffer, contract §1) と subscribe 先 queue.
+        self._frames: dict[str, deque[dict[str, Any]]] = {}
+        self._subscriptions: dict[str, list[TurnSubscription]] = {}
         self._active_pumps: dict[str, asyncio.Task[None]] = {}
         self._active_turns: dict[str, str] = {}
         self._queued: dict[str, asyncio.Queue[str]] = {}
@@ -204,7 +227,12 @@ class ChatService:
         self._turn_seq: dict[str, int] = {}
         self._tool_ctx: dict[str, RuleToolContext] = {}
         self._last_usage: dict[str, dict[str, Any]] = {}
-        self._monitor_heartbeat = monitor_heartbeat_seconds
+        self._monitor_heartbeat = (
+            self._settings.monitor_heartbeat_seconds
+            if monitor_heartbeat_seconds is None
+            else monitor_heartbeat_seconds
+        )
+        self._max_concurrent_turns = max(self._settings.max_concurrent_turns, 1)
         self._started = False
         self._reaper: asyncio.Task[None] | None = None
 
@@ -243,6 +271,277 @@ class ChatService:
             with contextlib.suppress(Exception):
                 await self._runtime.stop()
         self._started = False
+
+    # -------------------------------------------------------------------- frames
+
+    def _require_thread(self, thread_id: str) -> Thread:
+        thread = self._threads.get(thread_id)
+        if thread is None:
+            raise UnknownThreadError(f"thread が見つかりません: {thread_id}")
+        return thread
+
+    def _append_message(
+        self, thread_id: str, record: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """ConversationLog の entry を thread の message 形へ正規化する.
+
+        ConversationLog.record_message は {content, created_at, role, source} を
+        返し seq を持たないため、thread 側で採番し UI が読む key (text) へ寄る。
+        """
+        messages = self._messages.setdefault(thread_id, [])
+        entry: dict[str, Any] = {
+            "seq": len(messages) + 1,
+            "role": str(record.get("role", "user")),
+            "text": str(record.get("text", record.get("content", ""))),
+            "created_at": str(record.get("created_at", tokyo_iso())),
+            "source": str(record.get("source", "chat")),
+        }
+        turn_id = record.get("turn_id")
+        if turn_id is not None:
+            entry["turn_id"] = str(turn_id)
+        messages.append(entry)
+        return entry
+
+    def _frame_history(self, thread_id: str) -> deque[dict[str, Any]]:
+        history = self._frames.get(thread_id)
+        if history is None:
+            history = deque(maxlen=max(self._settings.max_frames_per_thread, 1))
+            self._frames[thread_id] = history
+        return history
+
+    def _require_turn_capacity(self, thread: Thread) -> None:
+        """新しいターンを開始して良いか max_concurrent_turns で確かめる (§4/§7).
+
+        thread 単位の busy と service 全体の同時実行上限を順に確かめる。ターン
+        開始そのものは Phase 1 側実装のため、ここでは受け入れ可否だけを契約
+        通りの exception で断る。
+
+        Args:
+            thread: ターンを開始しようとしている thread.
+
+        Raises:
+            TurnInProgressError: 同じ thread ですでにターンが動いている場合 (409)。
+            ConcurrencyLimitError: 同時実行ターンが上限へ達している場合 (429)。
+        """
+        running_turn_id = self._active_turns.get(thread.thread_id)
+        if running_turn_id is not None:
+            raise TurnInProgressError(turn_id=running_turn_id)
+        if len(self._active_turns) >= self._max_concurrent_turns:
+            raise ConcurrencyLimitError(
+                running_turn_ids=sorted(self._active_turns.values())
+            )
+
+    def _publish_monitor(
+        self,
+        thread: Thread,
+        event_type: MonitorEventType | str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        turn_id: str | None = None,
+    ) -> dict[str, Any]:
+        """thread frame series 起点で frame を払い出し hub と購読先へ配る.
+
+        seq は thread 内で単調 increasing (contract §1)。hub 側の write は monitor
+        SSE 用の写しで、同じ event_id を保つため UI は dedupe / merge で join できる。
+        hub には nested ではなく merged 形 (README §10.3 の平文 payload) で書く。
+        """
+        body = dict(payload or {})
+        resolved_turn = (
+            turn_id if turn_id is not None else self._active_turns.get(thread.thread_id)
+        )
+        event = self._hub.publish(
+            event_type,
+            conversation_id=thread.thread_id,
+            frame_style="merged",
+            session_id=thread.session_id,
+            payload=body,
+            turn_id=resolved_turn,
+        )
+        frame_dict = frame(
+            event.event_type,
+            seq=self._next_frame_seq(thread.thread_id),
+            conversation_id=thread.thread_id,
+            created_at=event.created_at,
+            event_id=event.event_id,
+            payload=body,
+            session_id=thread.session_id,
+            thread_id=thread.thread_id,
+            turn_id=resolved_turn,
+        )
+        self._frame_history(thread.thread_id).append(frame_dict)
+        for subscription in list(self._subscriptions.get(thread.thread_id, ())):
+            queue = subscription.frames
+            if queue.full():
+                # ring buffer と同じ truncation semantics で最新 frame を保つ.
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(dict(frame_dict))
+        return frame_dict
+
+    def _next_frame_seq(self, thread_id: str) -> int:
+        seq = self._seq.get(thread_id, 0) + 1
+        self._seq[thread_id] = seq
+        return seq
+
+    def _rule_tool_names(self) -> Sequence[str] | None:
+        """demo ルール tool を session へ載せるか (§7 DEMO_RULE_TOOLS)."""
+        return None if self._settings.demo_rule_tools else ()
+
+    def frames(self, thread_id: str, *, after_seq: int = 0) -> list[dict[str, Any]]:
+        """thread frame series の seq > after_seq を時順で返す (§4 events replay)."""
+        thread = self._require_thread(thread_id)
+        return [
+            dict(frame_item)
+            for frame_item in self._frames.get(thread.thread_id, ())
+            if int(frame_item["seq"]) > after_seq
+        ]
+
+    def monitor_frames(self, thread: Thread) -> list[dict[str, Any]]:
+        """snapshot の session_events へ出す lifecycle / ルール frame だけ抽出する."""
+        return [
+            frame_item
+            for frame_item in self.frames(thread.thread_id)
+            if frame_item["event_type"] in SESSION_EVENT_FRAME_TYPES
+        ]
+
+    def context_usage(self, thread: Thread) -> dict[str, Any]:
+        """thread frame series と turn record から §6 の usage 集計を作る.
+
+        turn record が usage を持つ場合はそれを正本とし、frame 側の usage は record
+        未踏の turn 分だけ補う (§6 二重集計回避)。
+        """
+        turns = [record.to_dict() for record in self._turns.get(thread.thread_id, ())]
+        reported = {
+            record["turn_id"]
+            for record in turns
+            if isinstance(record.get("usage"), Mapping)
+        }
+        usages: list[Mapping[str, Any]] = []
+        for frame_item in self.frames(thread.thread_id):
+            if frame_item["event_type"] != MonitorEventType.RUN_FINISHED:
+                continue
+            payload_usage = frame_item["payload"].get("usage")
+            if not isinstance(payload_usage, Mapping):
+                continue
+            if frame_item["turn_id"] in reported:
+                continue
+            usages.append(dict(payload_usage))
+        return format_context_usage(
+            session_id=thread.session_id or "",
+            turns=turns,
+            usages=usages,
+        )
+
+    async def subscribe_frames(
+        self,
+        thread_id: str,
+        *,
+        next_seq: int = 0,
+        turn_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """thread frame series を replay → live で購読する (GET .../events SSE 部材)."""
+        thread = self._require_thread(thread_id)
+        limit = max(self._settings.max_frames_per_thread, 1)
+        subscription = TurnSubscription(
+            frames=asyncio.Queue(maxsize=limit),
+            next_seq=next_seq,
+            queue_limit=limit,
+            thread_id=thread_id,
+        )
+        self._subscriptions.setdefault(thread_id, []).append(subscription)
+        self._queues[thread_id] = subscription.frames
+        last_seq = next_seq
+        try:
+            for frame_item in self.frames(thread_id, after_seq=next_seq):
+                if (
+                    turn_id is not None
+                    and frame_item.get("turn_id") is not None
+                    and frame_item["turn_id"] != turn_id
+                ):
+                    continue
+                last_seq = int(frame_item["seq"])
+                subscription.next_seq = last_seq
+                yield frame_item
+            while True:
+                if self._monitor_heartbeat > 0:
+                    try:
+                        frame_item = await asyncio.wait_for(
+                            subscription.frames.get(), timeout=self._monitor_heartbeat
+                        )
+                    except TimeoutError:
+                        frame_item = self._heartbeat_frame(thread)
+                else:
+                    frame_item = await subscription.frames.get()
+                seq = int(frame_item["seq"])
+                if seq <= last_seq:
+                    # heartbeat 配給で自分に再入った分は seq で捨てる.
+                    continue
+                frame_turn = frame_item.get("turn_id")
+                if (
+                    turn_id is not None
+                    and frame_turn is not None
+                    and frame_turn != turn_id
+                ):
+                    continue
+                last_seq = seq
+                subscription.next_seq = seq
+                yield frame_item
+        finally:
+            subscriptions = self._subscriptions.get(thread_id)
+            if subscriptions is not None:
+                with contextlib.suppress(ValueError):
+                    subscriptions.remove(subscription)
+                if not subscriptions:
+                    self._subscriptions.pop(thread_id, None)
+            if self._queues.get(thread_id) is subscription.frames:
+                self._queues.pop(thread_id, None)
+            subscription.next_seq = last_seq
+
+    def _heartbeat_frame(self, thread: Thread) -> dict[str, Any]:
+        """無動作 session でも stream を閉じないための heartbeat frame (§2 / §10.3)."""
+        pending = self.pending_approvals(thread_id=thread.thread_id)
+        return self._publish_monitor(
+            thread,
+            MonitorEventType.HEARTBEAT,
+            {
+                "active_turn_id": self._active_turns.get(thread.thread_id),
+                "conversation_id": thread.thread_id,
+                "pending_approval_ids": [item["approval_id"] for item in pending],
+                "session_id": thread.session_id,
+                "status": "active",
+                "timestamp": tokyo_iso(),
+            },
+        )
+
+    # ------------------------------------------------------------------ sessions
+
+    async def _open_session(
+        self, conversation_id: str, *, model: str | None = None
+    ) -> str:
+        """provider に session を作らせ thread と hub / tool ctx を結ぶ."""
+        if self._owns_runtime and not self._runtime.started:
+            # start() を呼んでいなくても thread を作れる (HTTP 層 start 前でも動く).
+            await self._runtime.start()
+        tool_ctx = RuleToolContext(
+            audit=self._audit,
+            broker=self._broker,
+            conversation_id=conversation_id,
+            judgments=self._judgments,
+            store=self._rules,
+        )
+        handle = await self._runtime.create_session(
+            model=model or self._settings.model,
+            tools=build_rule_tools(tool_ctx, only=self._rule_tool_names()),
+        )
+        self._sessions[handle.session_id] = conversation_id
+        self._hub.bind_session(
+            session_id=handle.session_id,
+            conversation_id=conversation_id,
+        )
+        tool_ctx.bind_session(handle.session_id)
+        self._tool_ctx[handle.session_id] = tool_ctx
+        return handle.session_id
 
     # ------------------------------------------------------------------ threads
 
@@ -393,6 +692,7 @@ class ChatService:
     ) -> AsyncIterator[dict[str, Any]]:
         """1 turn を実行し frame series を yield する（terminal frame で閉じる）."""
         thread = self._require_thread(thread_id)
+        self._require_turn_capacity(thread)
         started = await self._start_turn(thread, text, turn_id=turn_id)
         yield started
         async for frame_item in self.subscribe_frames(
@@ -411,9 +711,10 @@ class ChatService:
 
     async def post_turn(
         self, thread_id: str, text: str, *, turn_id: str | None = None
-    ) -> int:
+    ) -> dict[str, Any]:
         """background pump で turn を走らせ、起跑 frame dict を返す（SSE client 用）."""
         thread = self._require_thread(thread_id)
+        self._require_turn_capacity(thread)
         return await self._start_turn(thread, text, turn_id=turn_id)
 
     async def subscribe_run(

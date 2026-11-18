@@ -19,6 +19,7 @@ from typing import Any, Literal
 
 from app.agent.permissions import PermissionRecord
 from app.clock import tokyo_iso
+from app.services.session_events import MonitorEventType
 
 logger = logging.getLogger("household-ai.services.hub")
 
@@ -299,9 +300,13 @@ class ApprovalBroadcaster:
         )
 
     def publish_updated(self, record: PermissionRecord) -> None:
-        """REST 判断後など broker 外からの更新通知に使う（sync・非同期両対応）。"""
+        """REST 判断後など broker 外からの更新通知に使う（sync・非同期両対応）。
+
+        frame type は README 準拠の `pending_approvals_updated`（`approval_updated` は
+        廃止済み。contract §6）。
+        """
         self._hub.publish_for_session(
-            "approval_updated",
+            MonitorEventType.PENDING_APPROVALS_UPDATED,
             payload={"approval": record.to_dict()},
             session_id=record.prompt.session_id,
         )
