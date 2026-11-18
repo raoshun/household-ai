@@ -93,8 +93,9 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.11 | 承認 | 提案・改訂・復元は `approvals`（§11.5）と人間のHTTP 操作経由だけ。AI tool に承認・反映を許可しない。 | §4.5 L331、§6.3 L593-603、§10.3 L927-932、§12.4 L1053-1057、§18 L1437 |
 | 1.12 | HTTP scope | Phase 1 の成果物は §15 L1270「ルール管理API。」。rules API（§10.2 L915-921 の 7 row）と approvals API（§10.3 L927-930 の 4 row）、それらが使う repository / service / codec / index のみはこの契約で決める。hub の `ui-bridge` が既に確定させている rules / approvals / history 用語（Phase 0 UI 契約 §4）と衝突させたままにはしない。chat / session / AG-UI bridge は §12 のスコープ外として Phase 2 の HTTP 契約で決める。 | §15 L1266-1273、§10.2 L913-921、§10.3 L925-932、Phase 0 UI 契約 L71-112 |
 | 1.13 | 検証 | unit + integration pytest を pinned image の make targets で走る。host へ pip install しない。 | §18 L1438/L1439、§20 L1504-1518 |
-| 1.14 | Phase 0 との境界 | hub の `services/rules.py` / `services/tools.py` は残置し、hub vocabulary と README vocabulary を adapter で橋渡しする。hub 内部 API・frames・grant 契約を変えない。 | §13.4 L1110-1151、§7 hub contract L71-112 |
+| 1.14 | Phase 0 との境界 | hub の `services/rules.py` / `services/tools.py` は残置し、hub vocabulary と README vocabulary を adapter で橋渡しする。hub 内部 API・frames・grant 契約を変えない。 | README §13.4 実装済み構成 L1110-1151（api L1122・ui-bridge L1123）、Phase 0 契約 §2 frames L35-57・§5 grant L113-122、hub code `backend/app/services/rules.py` L16-18/L248・`tools.py` L25（HEAD で追跡） |
 | 1.15 | gate 維持 | 既存の gate（`make gate` L52-53）と proof gate（L55-56）、pinned SDK probe（`probe` target L58-59）は変更しない。Phase 1 は rules 用の unit / integration pytest を追加し、`make gate` の既存 checks を狭めない。 | `Makefile` L52-59、§20 L1500-1519 |
+| 1.16 | code 配置 | Phase 1 が新設する backend file は README §3 tree の名前に従う（`main.py` L136、`api/rules.py` L141・`api/approvals.py` L142、`services/rule_service.py` L147・`services/search_service.py` L148、`models/rule.py` L161、`repositories/rule_repository.py` L166、`db/database.py` L171・`db/migrations/` L172）。test は `tests/unit/` L217 と `tests/integration/` L218 へ作る。 | README §3 tree L131-172・L216-219。hub 既存 file は §1 決定 1.14 で残置（差異 D-11、§2.4.4）。 |
 
 ## 2. Phase 1 契約
 
@@ -158,23 +159,30 @@ Phase 1 で追加する属性（README の属性一覧に無いが、他の節�
 - README に `index.md` 等の目次ファイルは無い（grep 0 件）。Markdown 側へ追加ファイルを作らない。
 - SQLite（README `data/household.db` L197）は git 管理外の生成物。`.gitignore` L8-9 で既に無視される `data/` 以下に置く。
 
+#### 2.4.4 backend code 配置（README §3 L131-172・L216-219 と hub HEAD）
+
+- Phase 1 が新設する file は README §3 の tree の名前に従う: `backend/app/main.py`（L136）、`api/rules.py`（L141）・`api/approvals.py`（L142）、`services/rule_service.py`（L147）・`services/search_service.py`（L148）、`models/rule.py`（L161）、`repositories/rule_repository.py`（L166）、`db/database.py`（L171）と `db/migrations/`（L172）。`api/history.py`（L143）と chat 系の file、`agent/`（L152-158）は Phase 1 では作らない（§1 決定 1.12）。
+- これらの file は HEAD に存在しない（`git ls-files backend` で 0 件）。hub 既存の `services/rules.py`・`services/tools.py`・`services/chat.py` は §1 決定 1.14 で変更せず、rules 側の repository / service が hub の `RuleStore` を呼ぶ adapter で橋渡しする（差異 D-11）。
+- test は README §3 の tree 通り `tests/unit/`（L217）と `tests/integration/`（L218）へ作成する。HEAD に有る `tests/proofs/` は README の tree に無い配置で（`make proof` gate Makefile L55-56 で実行）、Phase 1 の test 配置へ混ぜない。`tests/e2e/`（L219）は Phase 1 では作らない。
+- 実行は pinned image の gate 経由（`make lint` L65-66、`make test` L68-69）。`backend/pyproject.toml` の pytest 設定は container 内 cwd（`backend/`）から `../tests` を指す（`testpaths = ["../tests"]` L49）。host へ pip install しない。
+
 ### 2.5 検索契約
 
-#### 2.5.1 検索対象（README §8.1 L704-712）
+#### 2.5.1 検索対象（README §8.1 検索方式 L701、検索対象 L705-712）
 
 ルール名・基本方針・適用条件・例外条件・判断基準・タグ
 
 #### 2.5.2 フィルタと件数
 
 - status: 「検索対象は原則として active のルールとする」（README §8.2 L743）。pending_approval は判断根拠に使用しない（L745）。デフォルトは `status=active`。
-- category: 1 値で絞る（README §8.2 Filter ノード L732、§9.2 category 表示 L818、§11.3 `category` 列 L970）。
+- category: 1 値で絞る（README §8.2 Filter ノード L732、§9.3「カテゴリ別表示」L812・表示項目「カテゴリ」L825、§11.3 `category` 列 L970）。
 - limit: README に上限の規定は無い。既定 10 は §6.2 search_rules 例の `"limit": 10`（L496）から取り、上限 20 は §1 決定 1.7 と §14.1 L1157「無関係なルールが過剰に返されない。」に基づく Phase 1 判断として §2.10 Q-03 に登記する。
 
 #### 2.5.3 並びと出力
 
 - 並びは関連度順（README §8.2 L741「検索結果は関連度順で返す」）。
-- 検索結果 1 件の key は id・title・category・status（README §6.2 出力例 block L503-513 の L506-509）に `summary`（L510）を加えた 5 件。`summary` は §4.3 属性一覧 L291-303・rules 列 L968-977 に無い key（差異 D-04・Q-06）。
-- ルール取得の本文出力は §9.4「ルール全文」L834 に従う。README §6.2 `get_rule`（heading L516、例 code block L534-550）は本文出力例を書かない。get_rule tool の schema 例（L518-528）の key `rule_id`（L524）だけで path `/api/rules/{id}`（L917）と version 併記 key の規定が無い（差異 D-05 open question Q-04）。（差異 D-05 / open question Q-04）。
+- 検索結果 1 件の key は id・title・category・status（README §6.2 出力例 block L502-514 の L506-509）に `summary`（L510）を加えた 5 件。`summary` は §4.3 属性一覧 L291-303・rules 列 L968-977 に無い key（差異 D-04・Q-06）。
+- ルール取得の本文出力は §9.4「ルール全文」L834 に従う。README §6.2 `get_rule`（heading L516、説明 L518、入力 block L522-526 の key `rule_id` L524）はコードブロックの出力例を持たず、出力を prose で「ルールの全文、バージョン、適用条件、例外条件を返す。」（L530）とだけ規定する。path `/api/rules/{id}`（L917）と version 併記 key の規定が無い（差異 D-05 / open question Q-04）。
 
 #### 2.5.4 FTS5 と CJK 分割（README §17 L1417）
 
@@ -220,7 +228,7 @@ Phase 0 契約 (L95-99) は hub 側で `GET|POST /api/rules`、`GET|PATCH|DELETE
 | 差異 | README | Phase 0 契約 | Phase 1 の扱い |
 | :--- | :--- | :--- | :--- |
 | path 変数名 | `{id}` L917-920 | `{rule_id}` L95 | 実装を 1 本に寄せる（README 準拠で `{id}`）。Phase 0 契約文書の更新は §2.10 Q-07 |
-| 更新 verb | `PUT` L917 | `PATCH` L95 | README の `PUT` を実装し、`PATCH` を併用するかは open question Q-07（§2.10） |
+| 更新 verb | `PUT` L918 | `PATCH` L95 | README の `PUT` を実装し、`PATCH` を併用するかは open question Q-07（§2.10） |
 | 復元 endpoint | `POST /api/rules/{id}/restore` L920 | 無し | Phase 1 で追加（§1 決定 1.10、差異 D-08） |
 | 検索 endpoint | `GET /api/rules/search` L921 | 無し | Phase 1 で追加（§1 決定 1.5・1.7、§2.5） |
 | 削除 endpoint | 無し | `DELETE /api/rules/{rule_id}` L95 | README に削除 endpoint は無い。Phase 1 の public API には置かない（tombstone は hub 内部） |
@@ -241,7 +249,7 @@ README §18 L1435「実装時に公式仕様との差異があれば記録する
 
 | ID | 差異 | README | もう一方 | Phase 1 の扱い |
 | :--- | :--- | :--- | :--- | :--- |
-| D-01 | 判断ログの table 名と HTTP path | `judgment_logs` L1001、列 L1003-1009（version 列なし、`applied_rules_json` L1006）。HTTP は §10.4 `GET /api/history` L921・`GET /api/history/{id}` L917 | Phase 0 契約は `GET /api/history/judgments`（L100）・`POST /api/judgments`（L101） | Phase 1 は rules API のみ実装し、table 名と列名は README を使う。判断作成 endpoint は README 側に不在（grep 0 件）なので §2.10 Q-05 で確定 |
+| D-01 | 判断ログの table 名と HTTP path | `judgment_logs` L1001、列 L1003-1009（version 列なし、`applied_rules_json` L1006）。HTTP は §10.4 History API L934 の `GET /api/history` L938・`GET /api/history/{id}` L939 | Phase 0 契約は `GET /api/history/judgments`（L100）・`POST /api/judgments`（L101） | Phase 1 は rules API のみ実装し、table 名と列名は README を使う。判断作成 endpoint は README 側に不在（grep 0 件）なので §2.10 Q-05 で確定 |
 | D-02 | 詳細画面の表示項目と正本見出し | §9.4 表示項目 8（L834-841） | §4.2 本文見出し 4（L270/L274/L278/L282、level 1） | 正本見出し 4 節を先行し、UI 側は §11.3（L968-977）と §11.4（L981-988）の値を API projection で補う（Q-06） |
 | D-03 | priority の値域 | 列 L973・属性 L297・例 `priority: normal` L254。値域の列挙なし（grep 0 件） | hub の `Rule`（`rules.py` L48-61）に priority フィールドなし | Phase 1 は `TEXT NOT NULL DEFAULT 'normal'`。許容値は Phase 1 判断で deterministic enum にし、#2 で README 追記を要求 |
 | D-04 | `summary` の所在 | 検索出力 key L510。front matter 属性一覧 L291-303・rules 列 L968-977 に無し（grep 0 件） | hub `Rule` は `content` L50 の 1 text のみ | Phase 1 は `summary` を本文から生成する index 派生値とし、front matter へ恒久化しない（#2 で README 化を提案） |
@@ -251,6 +259,7 @@ README §18 L1435「実装時に公式仕様との差異があれば記録する
 | D-08 | HTTP verb と path 変数 | `PUT /api/rules/{id}` L918・`POST /api/rules/{id}/restore` L920・`{id}` L917-920。削除 endpoint 無し（grep 0 件） | Phase 0 契約 L95 は `PATCH` / `DELETE`・`{rule_id}` | 実装は README 準拠（`PUT`・`restore`・tombstone 露出なし）。Phase 0 契約文書更新は §2.10 Q-07 |
 | D-09 | version file の命名規約 | 例 L341-347（`v1.md` L344・`v2.md` L345・`v3.md` L346）と L337「ルールの更新時には既存ファイルを上書きせず、変更履歴を残す。」、L349「最新版への参照を管理する。」。規約の明文なし | hub 側は Markdown file を書かない（§2.8 hub 適応層） | Phase 1 は `v<version>.md` を契約とし、README 化を Q-01 で #2 へ登記 |
 | D-10 | 承認時刻列 | `rule_versions.approved_by` L987・`approvals.reviewed_at` L999 のみ。`approved_at` は README 全体に無し（grep 0 件） | hub `Rule` に `approved_at` L58 あり（Markdown 化しない） | Phase 1 は README 列のみ使い、時刻の追加要否は open question Q-01 で #2 へ登記 |
+| D-11 | README §3 の backend file 名と HEAD の code | `main.py` L136・`api/` L139-143・`services/rule_service.py` L147・`models/rule.py` L161・`repositories/rule_repository.py` L166・`db/` L170-172 | hub 実在は `services/rules.py`・`services/tools.py`・`services/chat.py` 等（`api/`・`models/`・`repositories/`・`db/` は HEAD に 0 件） | README の file 名で Phase 1 module を新設し、hub 側は §1 決定 1.14 で残置（§2.4.4）。hub vocabulary との対応は adapter 局所 |
 
 ### 2.10 再建工事（2026-11-19）
 
