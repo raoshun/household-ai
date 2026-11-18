@@ -89,7 +89,7 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.7 | 検索 limit | Phase 1 backend の検索 API は `limit` を既定 10・上限 20 で clamping する。README に検索 limit を課す sentence は無い（README grep: 「上限」「表示件数」「件数」はいずれも 0 件）。根拠は §6.2 入力例 `"limit": 10` L496 と §14.1 L1157「無関係なルールが過剰に返されない。」の 2 つで、上限値 20 は Phase 1 判断として §2.10 Q-03 に登記する。 | §6.2 L492-497、§8.2 L741、§14.1 L1157 |
 | 1.8 | 検索結果形 | 既定 projection は §6.2 `search_rules` 出力の 5 key（id L506・title L507・category L508・status L509・summary L510）に README の `current_version`（§11.3 L974）を加えた 6 key とする。§9.6 L871「判断時点のルールバージョンを記録すること」に従い、full Markdown body や全文 section mirror を既定の検索結果に入れない。 | §6.2 L503-513、§9.6 L863/L871、§11.3 L974 |
 | 1.9 | FTS5 CJK 分割 | canonical CJK text を 2-3 char の contiguous n-gram へ変換し、ASCII runs（length ≥ 3）を `ascii_terms` へ入れる。検索 query も同じ変換を通し、term group 間は AND、group 内 alternatives は OR。README の検索フローは tokenizer を指定しない（§8.2 L723-726）ため Phase 1 design として §2.6 で決める。実測は §4。 | §8.1 L703、§8.2 L726、§17 L1417、§4（probe） |
-| 1.10 | バージョン | 版数は monotonic で reuse しない。内容 hash が同じ candidates は reject する。旧 version を restore るときは旧ファイルを書き換えず、新しい version number で copy する（revision と restoration の両方で candidate version を作る）。status 変化は version を上げない。README §11.3 rules 行に version 列は無く `current_version` pointer（L974）だけ、version 一覧は §11.4（L981-988）。 | §4.6 L337（上書き禁止）/L342-344（version files）/L346・L349（最新版参照）/L360（復元）、§11.3 L974、§11.4 L981-988、§14.3 L1215 |
+| 1.10 | バージョン | 版数は monotonic で reuse しない。内容 hash が同じ candidates は reject する。旧 version を restore るときは旧ファイルを書き換えず、新しい version number で copy する（revision と restoration の両方で candidate version を作る）。status 変化は version を上げない。README §11.3 rules 行に version 列は無く `current_version` pointer（L974）だけ、version 一覧は §11.4（L981-988）。 | §4.6 L337（上書き禁止）/L344・L345・L346（version files）/L349（最新版参照）/L360（復元）、§11.3 L974、§11.4 L981-988、§14.3 L1215 |
 | 1.11 | 承認 | 提案・改訂・復元は `approvals`（§11.5）と人間のHTTP 操作経由だけ。AI tool に承認・反映を許可しない。 | §4.5 L331、§6.3 L593-603、§10.3 L927-932、§12.4 L1053-1057、§18 L1437 |
 | 1.12 | HTTP scope | Phase 1 の成果物は §15 L1270「ルール管理API。」。rules API（§10.2 L915-921 の 7 row）と approvals API（§10.3 L927-930 の 4 row）、それらが使う repository / service / codec / index のみはこの契約で決める。hub の `ui-bridge` が既に確定させている rules / approvals / history 用語（Phase 0 UI 契約 §4）と衝突させたままにはしない。chat / session / AG-UI bridge は §12 のスコープ外として Phase 2 の HTTP 契約で決める。 | §15 L1266-1273、§10.2 L913-921、§10.3 L925-932、Phase 0 UI 契約 L71-112 |
 | 1.13 | 検証 | unit + integration pytest を pinned image の make targets で走る。host へ pip install しない。 | §18 L1438/L1439、§20 L1504-1518 |
@@ -125,7 +125,7 @@ rule_versions (id, rule_id, version, content_hash, change_reason, created_by,
 
 ### 2.3 version と判断ログ
 
-1. `version` はルールごとに 1 以上の整数とし、新しいほど大きい値を使う（番号の使い回しなし）。README §4.6 の file 例 L342-346（`data/rules/parenting/parenting-001/v1.md`） と API の `version` 参照 L918-919 に従う。
+1. `version` はルールごとに 1 以上の整数とし、新しいほど大きい値を使う（番号の使い回しなし）。README §4.6 の tree 例（block L341-347: `data/rules/parenting/` L342・`parenting-001/` L343・`v1.md` L344・`v2.md` L345・`v3.md` L346）と API の `version` 参照 L918-919 に従う。
 2. 最新版 (`latest version`) は README の `rules.current_version`（§11.3 L974）が指す。README §4.6 L349 最新版参照。
 3. 判断ログには判断時点の version を保存する（README §14.3 L1214、§9.6 L871「判断時点のルールバージョンを記録すること」と §11.6 `applied_rules_json` L1006）。
 4. README が指定する DB table 名は `judgment_logs`（§11.6 L1001）。Phase 0 の HTTP 契約は `GET /api/history/judgments`（docs/plan/2026-11-11-phase0-ui-implementation-contract.md L100）と `POST /api/judgments`（同 L101）である。table 名と path の対応は §2.9 差異記録台帳 D-01 に登記し、Phase 1 では table 名を README と変えない。
@@ -154,7 +154,7 @@ Phase 1 で追加する属性（README の属性一覧に無いが、他の節�
 
 #### 2.4.3 ファイル配置
 
-- 1 rule 1 version = 1 Markdown: `data/rules/<category>/<rule-id>/v<n>.md`。README の例は `data/rules/parenting/parenting-001/v1.md`（L342）、v2（L343）、v3（L344）。ファイル名の詳細規約は README に明文が無い（差異 D-09）。
+- 1 rule 1 version = 1 Markdown: `data/rules/<category>/<rule-id>/v<n>.md`。README の例は tree block L341-347 に `data/rules/parenting/`（L342）／`parenting-001/`（L343）／`v1.md`（L344）・`v2.md`（L345）・`v3.md`（L346）と書かれている。ファイル名の詳細規約は README に明文が無い（差異 D-09）。
 - category 直下は README §3 L198-204 の 6 ディレクトリ（parenting: L199、education: L200、health: L201、lifestyle: L202、finance: L203、general: L204）のみ。追加 category を作らない（§1 決定 1.4）。
 - README に `index.md` 等の目次ファイルは無い（grep 0 件）。Markdown 側へ追加ファイルを作らない。
 - SQLite（README `data/household.db` L197）は git 管理外の生成物。`.gitignore` L8-9 で既に無視される `data/` 以下に置く。
