@@ -84,9 +84,9 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.2 | ルール正本 | Markdown ファイル。DB は検索用インデックス・承認状態・履歴・メタデータのみ保持。 | §4.1 L234/L236/L240 |
 | 1.3 | ルール identity | 1 rule = 1 系の `rules` row + effective バージョン pointer + pending 候補 version。提案の新規作成、改訂、旧版復元、active 化、archived、拒否は同一 `rules.id` の状態遷移とし、識別子を切り替えない。status 遷移だけで version は上げない。 | §4.6 L337-360、§9.5 L845-854、§14.3 L1212-1216、§11.3-§11.5 |
 | 1.4 | カテゴリ | `rules.category`（§11.3 L970）と front matter `category`（§4.2 L248）が一意の source。`data/rules/` 直下の 6 slug（parenting・education・health・lifestyle・finance・general、§3 L199-204）を Phase 1 が定義する。カテゴリ別 table も hub 由来 vocabulary も作らない。 | §3 L199-204、§4.2 L248、§9.3 L812 |
-| 1.5 | 検索対象 | ルール名・基本方針・適用条件・例外条件・判断基準・タグの 6 項目（§8.1 L707-712）。カテゴリと status は検索語ではなく §8.2 のフィルタ stage（Filter by Status / Category L732）。Markdown 本文全文は検索対象にせず、§4.2 の 4 見出し（基本方針 L270 / 適用条件 L274 / 例外条件 L278 / 判断基準 L282）と front matter から §8.1 の 6 項目を抽出して index に投影する。README の rules 一覧 row（L915）には query が書かれていないため、カテゴリ・status の絞り込み表現は Phase 1 の query param 設計とする（§2.10 Q-01）。 | §8.1 L705-712、§8.2 L726-745、§10.2 L915-921 |
+| 1.5 | 検索対象 | ルール名・基本方針・適用条件・例外条件・判断基準・タグの 6 項目（§8.1 L707-712）。カテゴリと status は検索語ではなく §8.2 のフィルタ stage（Filter by Status / Category L732）。Markdown 本文全文は検索対象にせず、§4.2 の 4 見出し（基本方針 L270 / 適用条件 L274 / 例外条件 L278 / 判断基準 L282）と front matter から §8.1 の 6 項目を抽出して index に投影する。README の rules 一覧 row（L915）には query が書かれていないため、カテゴリ・status の絞り込み表現は Phase 1 の query param 設計とする（§2.10.1 Q-01）。 | §8.1 L705-712、§8.2 L726-745、§10.2 L915-921 |
 | 1.6 | 検索対象 status | 既定は active のみ（「検索対象は原則としてactiveのルールとする。」）。pending_approval は正式な判断根拠にしない。 | §8.2 L743/L745、§14.1 L1158-1159 |
-| 1.7 | 検索 limit | Phase 1 backend の検索 API は `limit` を既定 10・上限 20 で clamping する。README に検索 limit を課す sentence は無い（README grep: 「上限」「表示件数」「件数」はいずれも 0 件）。根拠は §6.2 入力例 `"limit": 10` L496 と §14.1 L1157「無関係なルールが過剰に返されない。」の 2 つで、上限値 20 は Phase 1 判断として §2.10 Q-03 に登記する。 | §6.2 L492-497、§8.2 L741、§14.1 L1157 |
+| 1.7 | 検索 limit | Phase 1 backend の検索 API は `limit` を既定 10・上限 20 で clamping する。README に検索 limit を課す sentence は無い（README grep: 「上限」「表示件数」「件数」はいずれも 0 件）。根拠は §6.2 入力例 `"limit": 10` L496 と §14.1 L1157「無関係なルールが過剰に返されない。」の 2 つで、上限値 20 は Phase 1 判断として §2.10.1 Q-03 に登記する。 | §6.2 L492-497、§8.2 L741、§14.1 L1157 |
 | 1.8 | 検索結果形 | 既定 projection は §6.2 `search_rules` 出力の 5 key（id L506・title L507・category L508・status L509・summary L510）に README の `current_version`（§11.3 L974）を加えた 6 key とする。§9.6 L871「判断時点のルールバージョンを記録すること」に従い、full Markdown body や全文 section mirror を既定の検索結果に入れない。 | §6.2 L503-513、§9.6 L863/L871、§11.3 L974 |
 | 1.9 | FTS5 CJK 分割 | canonical CJK text を 2-3 char の contiguous n-gram へ変換し、ASCII runs（length ≥ 3）を `ascii_terms` へ入れる。検索 query も同じ変換を通し、term group 間は AND、group 内 alternatives は OR。README の検索フローは tokenizer を指定しない（§8.2 L723-726）ため Phase 1 design として §2.6 で決める。実測は §4。 | §8.1 L703、§8.2 L726、§17 L1417、§4（probe） |
 | 1.10 | バージョン | 版数は monotonic で reuse しない。内容 hash が同じ candidates は reject する。旧 version を restore るときは旧ファイルを書き換えず、新しい version number で copy する（revision と restoration の両方で candidate version を作る）。status 変化は version を上げない。README §11.3 rules 行に version 列は無く `current_version` pointer（L974）だけ、version 一覧は §11.4（L981-988）。 | §4.6 L337（上書き禁止）/L344・L345・L346（version files）/L349（最新版参照）/L360（復元）、§11.3 L974、§11.4 L981-988、§14.3 L1215 |
@@ -176,7 +176,7 @@ Phase 1 で追加する属性（README の属性一覧に無いが、他の節�
 
 - status: 「検索対象は原則として active のルールとする」（README §8.2 L743）。pending_approval は判断根拠に使用しない（L745）。デフォルトは `status=active`。
 - category: 1 値で絞る（README §8.2 Filter ノード L732、§9.3「カテゴリ別表示」L812・表示項目「カテゴリ」L825、§11.3 `category` 列 L970）。
-- limit: README に上限の規定は無い。既定 10 は §6.2 search_rules 例の `"limit": 10`（L496）から取り、上限 20 は §1 決定 1.7 と §14.1 L1157「無関係なルールが過剰に返されない。」に基づく Phase 1 判断として §2.10 Q-03 に登記する。
+- limit: README に上限の規定は無い。既定 10 は §6.2 search_rules 例の `"limit": 10`（L496）から取り、上限 20 は §1 決定 1.7 と §14.1 L1157「無関係なルールが過剰に返されない。」に基づく Phase 1 判断として §2.10.1 Q-03 に登記する。
 
 #### 2.5.3 並びと出力
 
@@ -219,7 +219,7 @@ Phase 0 には全文検索が無い（Phase 0 契約 docs/plan/2026-11-11：`/ap
 | POST | `/api/approvals/{id}/approve` | 承認 L929 |
 | POST | `/api/approvals/{id}/reject` | 却下 L930 |
 
-README の Rule API / Approval API には `GET /api/rules/{id}/versions/{version}` も `GET /api/approvals/pending` も無い（grep 0 件）。`GET /api/rules/search` L921 には endpoint 名しか無く、query 参数・limit・offset・category/status 参数の規定が無い。README は §10.3 L932「承認APIは認証された人間の操作のみ許可する。」、§12.1 L1029「家庭内ネットワーク限定であっても認証機能を設ける。」・L1031「初期段階ではシンプルなユーザー認証を実装する。」、§17 の table L1406-1421 の L1420 行（項目「認証」、要件「必須」）を要求するが、§10.2・§10.3 の endpoint に認証 scheme は書かれていない。Phase 1 でどう担保するか §2.10 Q-02。
+README の Rule API / Approval API には `GET /api/rules/{id}/versions/{version}` も `GET /api/approvals/pending` も無い（grep 0 件）。`GET /api/rules/search` L921 には endpoint 名しか無く、query 参数・limit・offset・category/status 参数の規定が無い。README は §10.3 L932「承認APIは認証された人間の操作のみ許可する。」、§12.1 L1029「家庭内ネットワーク限定であっても認証機能を設ける。」・L1031「初期段階ではシンプルなユーザー認証を実装する。」、§17 の table L1406-1421 の L1420 行（項目「認証」、要件「必須」）を要求するが、§10.2・§10.3 の endpoint に認証 scheme は書かれていない。Phase 1 でどう担保するか §2.10.1 Q-02。
 
 #### 2.7.2 Phase 0 契約との差異（docs/plan/2026-11-11 §4 L94-101）
 
@@ -227,8 +227,8 @@ Phase 0 契約 (L95-99) は hub 側で `GET|POST /api/rules`、`GET|PATCH|DELETE
 
 | 差異 | README | Phase 0 契約 | Phase 1 の扱い |
 | :--- | :--- | :--- | :--- |
-| path 変数名 | `{id}` L917-920 | `{rule_id}` L95 | 実装を 1 本に寄せる（README 準拠で `{id}`）。Phase 0 契約文書の更新は §2.10 Q-07 |
-| 更新 verb | `PUT` L918 | `PATCH` L95 | README の `PUT` を実装し、`PATCH` を併用するかは open question Q-07（§2.10） |
+| path 変数名 | `{id}` L917-920 | `{rule_id}` L95 | 実装を 1 本に寄せる（README 準拠で `{id}`）。Phase 0 契約文書の更新は §2.10.1 Q-07 |
+| 更新 verb | `PUT` L918 | `PATCH` L95 | README の `PUT` を実装し、`PATCH` を併用するかは open question Q-07（§2.10.1）で登記 |
 | 復元 endpoint | `POST /api/rules/{id}/restore` L920 | 無し | Phase 1 で追加（§1 決定 1.10、差異 D-08） |
 | 検索 endpoint | `GET /api/rules/search` L921 | 無し | Phase 1 で追加（§1 決定 1.5・1.7、§2.5） |
 | 削除 endpoint | 無し | `DELETE /api/rules/{rule_id}` L95 | README に削除 endpoint は無い。Phase 1 の public API には置かない（tombstone は hub 内部） |
@@ -249,17 +249,17 @@ README §18 L1435「実装時に公式仕様との差異があれば記録する
 
 | ID | 差異 | README | もう一方 | Phase 1 の扱い |
 | :--- | :--- | :--- | :--- | :--- |
-| D-01 | 判断ログの table 名と HTTP path | `judgment_logs` L1001、列 L1003-1009（version 列なし、`applied_rules_json` L1006）。HTTP は §10.4 History API L934 の `GET /api/history` L938・`GET /api/history/{id}` L939 | Phase 0 契約は `GET /api/history/judgments`（L100）・`POST /api/judgments`（L101） | Phase 1 は rules API のみ実装し、table 名と列名は README を使う。判断作成 endpoint は README 側に不在（grep 0 件）なので §2.10 Q-05 で確定 |
-| D-02 | 詳細画面の表示項目と正本見出し | §9.4 表示項目 8（L834-841） | §4.2 本文見出し 4（L270/L274/L278/L282、level 1） | 正本見出し 4 節を先行し、UI 側は §11.3（L968-977）と §11.4（L981-988）の値を API projection で補う（Q-06） |
+| D-01 | 判断ログの table 名と HTTP path | `judgment_logs` L1001、列 L1003-1009（version 列なし、`applied_rules_json` L1006）。HTTP は §10.4 History API L934 の `GET /api/history` L938・`GET /api/history/{id}` L939 | Phase 0 契約は `GET /api/history/judgments`（L100）・`POST /api/judgments`（L101） | Phase 1 は rules API のみ実装し、table 名と列名は README を使う。判断作成 endpoint は README 側に不在（grep 0 件）なので §2.10.1 Q-05 で確定 |
+| D-02 | 詳細画面の表示項目と正本見出し | §9.4 表示項目 8（L834-841） | §4.2 本文見出し 4（L270/L274/L278/L282、level 1） | 正本見出し 4 節を先行し、UI 側は §11.3（L968-977）と §11.4（L981-988）の値を API projection で補う（open question Q-06）。 |
 | D-03 | priority の値域 | 列 L973・属性 L297・例 `priority: normal` L254。値域の列挙なし（grep 0 件） | hub の `Rule`（`rules.py` L48-61）に priority フィールドなし | Phase 1 は `TEXT NOT NULL DEFAULT 'normal'`。許容値は Phase 1 判断で deterministic enum にし、#2 で README 追記を要求 |
 | D-04 | `summary` の所在 | 検索出力 key L510。front matter 属性一覧 L291-303・rules 列 L968-977 に無し（grep 0 件） | hub `Rule` は `content` L50 の 1 text のみ | Phase 1 は `summary` を本文から生成する index 派生値とし、front matter へ恒久化しない（#2 で README 化を提案） |
-| D-05 | version を指定したルール取得 | §9.4 現在のバージョン L839・§14.3 L1215「既存ルールのバージョンが保持される。」を要求。§6.2 get_rule 入力は `rule_id` L524、§10.2 L915-921 に version 指定 path 無し（grep 0 件） | hub は `revision` int L60 を持つ | Phase 1 は `GET /api/rules/{id}/versions` L919 を実装し、version 指定取得の表現（path か query か）を §2.10 Q-04 で確定 |
+| D-05 | version を指定したルール取得 | §9.4 現在のバージョン L839・§14.3 L1215「既存ルールのバージョンが保持される。」を要求。§6.2 get_rule 入力は `rule_id` L524、§10.2 L915-921 に version 指定 path 無し（grep 0 件） | hub は `revision` int L60 を持つ | Phase 1 は `GET /api/rules/{id}/versions` L919 を実装し、version 指定取得の表現（path か query か）を §2.10.1 Q-04 で確定 |
 | D-06 | `draft` / `archived` への遷移条件 | §4.5 L325-329 に列挙のみ。§9.5 L845-854 は承認/却下/復元しか書かない | hub `_transition`（`rules.py` L408-424）には active 化を pending 限定する制約 L420 があるが draft/archived 相当なし | enum と SQL 制約は保持し、Phase 1 の public API では遷移を公開しない。#2 で README 追記を要求 |
-| D-07 | README に行の無い必要 endpoint | 無し（`versions/{version}`・`approvals/pending` は grep 0 件）。一覧は L915・L919・L927、検索 L921 には query 規定無し | hub tool 側は status 語で filter する（`tools.py` L151-158） | Phase 1 の query param 設計で補い、README 化すべきものは §2.10 Q-01 で #2 へ登記 |
-| D-08 | HTTP verb と path 変数 | `PUT /api/rules/{id}` L918・`POST /api/rules/{id}/restore` L920・`{id}` L917-920。削除 endpoint 無し（grep 0 件） | Phase 0 契約 L95 は `PATCH` / `DELETE`・`{rule_id}` | 実装は README 準拠（`PUT`・`restore`・tombstone 露出なし）。Phase 0 契約文書更新は §2.10 Q-07 |
-| D-09 | version file の命名規約 | 例 L341-347（`v1.md` L344・`v2.md` L345・`v3.md` L346）と L337「ルールの更新時には既存ファイルを上書きせず、変更履歴を残す。」、L349「最新版への参照を管理する。」。規約の明文なし | hub 側は Markdown file を書かない（§2.8 hub 適応層） | Phase 1 は `v<version>.md` を契約とし、README 化を Q-01 で #2 へ登記 |
-| D-10 | 承認時刻列 | `rule_versions.approved_by` L987・`approvals.reviewed_at` L999 のみ。`approved_at` は README 全体に無し（grep 0 件） | hub `Rule` に `approved_at` L58 あり（Markdown 化しない） | Phase 1 は README 列のみ使い、時刻の追加要否は open question Q-01 で #2 へ登記 |
-| D-11 | README §3 の backend file 名と HEAD の code | `main.py` L136・`api/` L139-143・`services/rule_service.py` L147・`models/rule.py` L161・`repositories/rule_repository.py` L166・`db/` L170-172 | hub 実在は `services/rules.py`・`services/tools.py`・`services/chat.py` 等（`api/`・`models/`・`repositories/`・`db/` は HEAD に 0 件） | README の file 名で Phase 1 module を新設し、hub 側は §1 決定 1.14 で残置（§2.4.4）。hub vocabulary との対応は adapter 局所 |
+| D-07 | README に行の無い必要 endpoint | 無し（`versions/{version}`・`approvals/pending` は grep 0 件）。一覧は L915・L919・L927、検索 L921 には query 規定無し | hub tool 側は status 語で filter する（`tools.py` L151-158） | Phase 1 の query param 設計で補い、README 化すべきものは §2.10.1 Q-01 で #2 へ登記 |
+| D-08 | HTTP verb と path 変数 | `PUT /api/rules/{id}` L918・`POST /api/rules/{id}/restore` L920・`{id}` L917-920。削除 endpoint 無し（grep 0 件） | Phase 0 契約 L95 は `PATCH` / `DELETE`・`{rule_id}` | 実装は README 準拠（`PUT`・`restore`・tombstone 露出なし）。Phase 0 契約文書更新は §2.10.1 Q-07 |
+| D-09 | version file の命名規約 | 例 L341-347（`v1.md` L344・`v2.md` L345・`v3.md` L346）と L337「ルールの更新時には既存ファイルを上書きせず、変更履歴を残す。」、L349「最新版への参照を管理する。」。規約の明文なし | hub 側は Markdown file を書かない（§2.8 hub 適応層） | Phase 1 は `v<version>.md` を契約とし、README 化は open question Q-01（§2.10.1）で登記 |
+| D-10 | 承認時刻列 | `rule_versions.approved_by` L987・`approvals.reviewed_at` L999 のみ。`approved_at` は README 全体に無し（grep 0 件） | hub `Rule` に `approved_at` L58 あり（Markdown 化しない） | Phase 1 は README 列のみ使い、時刻の生成・保存形式と列の追加要否は open question Q-11（§2.10.1）で #2 へ登記 |
+| D-11 | README §3 の backend file 名と HEAD の code | `main.py` L136・`api/` L139-143・`services/rule_service.py` L147・`models/rule.py` L161・`repositories/rule_repository.py` L166・`db/` L170-172 | hub 実在は `origin/main` の 17 file（`agent/` 5・`services/` 9・`app/__init__.py`・`app/clock.py`・`app/config.py`）で `api/`・`models/`・`repositories/`・`db/` は 0 件。README 名の新設は Phase 1 の工事（決定 1.16） | README の file 名で Phase 1 module を新設し、hub 側は §1 決定 1.14 で残置（§2.4.4）。hub vocabulary との対応は adapter 局所 |
 
 ### 2.10 再建工事（2026-11-19）
 
@@ -272,3 +272,22 @@ Phase 1 として書いていたコードは git reflog に残る `merge origin/
   - README に「安全性と公平性のバランスを評価する。」という文は無い（`公平性` 0 件、`安全性` は §12 見出し L1023「# 12. セキュリティ・安全性」に 1 件）。Phase 1 の完了条件は §15 L1272-1273「ルールを登録・検索・更新できる。」である。
   - README に principle を並べた block は無い（`principles` 0 件、principle 名は grep 0 件）。§2.3 L110-116「AI部分を直接実装しない。」他が書くのは Copilot SDK の抽象化だけである。よって AI が rule vocabulary を選ぶ優先順位は README 側には規定が無い。
   - README に FTS5 の virtual table 名（`rules_fts` 0 件）、token 化手法（`tokenizer` 0 件）、検索 result の上限（`上限` 0 件、`表示件数` 0 件）、AI による「評価」（0 件）の規定は無い。§8.2 の規定は L741「検索結果は関連度順で返す。」、L743「検索対象は原則としてactiveのルールとする。」、L745「pending_approvalのルールは正式な判断根拠として使用しない。」の 3 文だけである。
+#### 2.10.1 open question 台帳（Q-01 から。この session で new question を足すときはこの表に行を足す）
+
+README 側に要求行が無く、Phase 1 の実装判断が先に要る論点の一覧（README §18 L1435「実装と仕様の差異は、この README に実装影響を明記する。」と Issue #2 登記先 L25「- [ ] Issue #2: README の Phase 1 仕様を UI 情報を含めて確定」）。
+
+2026-11-19 現在の登記は Q-01 から Q-11 まで。§2.7.2・§2.9 差異台帳・§2.10 の本文が参照する open question ID は、下の table の ID を指す。
+
+| ID | 論点 | Phase 1 先行実装 | #2 へ登記する内容 | 参照 |
+| :--- | :--- | :--- | :--- | :--- |
+| Q-01 | README に規定の無い要求（category dir slug、`v<n>.md` の file 名、必要な endpoint、時刻列）を README へ追記するか | 契約側で先行する（決定 1.4・決定 1.10・決定 1.12・決定 1.14・決定 1.16） | README §4・§10・§11 への追記 | 差異 D-07・差異 D-09・差異 D-10、§2.4.3、§2.7.1 |
+| Q-02 | HTTP の auth scheme をどう担保するか。README §17 L1420 は「認証」row の値が「必須」のみで §10 の endpoint 行に auth の記述が無い | README 準拠の endpoint だけ作り、認証は §12.1 L1029「家庭内ネットワーク限定であっても認証機能を設ける。」と L1031「初期段階ではシンプルなユーザー認証を実装する。」で先行し、scheme は hub `app/services/permissions_api.py` の precedent で決める | README §10 への auth 条項追記 | §2.7.1 |
+| Q-03 | 検索 limit の README 側規定（README §8.2 L714-745 に limit の数値は無く、§6.2 例の `"limit": 10`（L496）だけ） | 決定 1.7（既定 10・上限 20 で clamping）で先行実装する | README §8.2 への limit 条項追記 | 決定 1.7、§2.5.2 |
+| Q-04 | version を指定した rule 取得と query params（README §9.4 L839・§14.3 L1215 が version 保持を要求、§6.2 `get_rule` 入力は `rule_id` L524 のみ） | Phase 1 は §2.7 の contract endpoint で先行 | README §6.2・§10.2 への行追加 | 差異 D-05 |
+| Q-05 | 判断ログ作成 endpoint と tool（README 側に該当行が無い） | Phase 1 では API を作らない | README §6・§10 への行追加 | 差異 D-01、§2.3 |
+| Q-06 | `summary` の生成方法（README key であり §4.3・§11 に列が無い）と §9.4 UI 8 項目の projection | `rule_versions.summary` 列（README §11 に無い列）へ §4.2 の 4 見出し（README L270/L274/L278/L282）直後の text row（README L272）を書き、UI 側の 8 項目は API projection で補う | README §4.3・§11.4 への列追加 | 差異 D-02・D-04、§2.4.2、§2.5.3 |
+| Q-07 | 更新 verb と path 変数（README `PUT` L918 と `{id}` L917、Phase 0 契約 §4 L95 の `PATCH` と `{rule_id}`） | README の `PUT` と `{id}` を実装し、Phase 0 契約文書は未更新 | Phase 0 契約 §4 の更新 | 差異 D-08、§2.7.2 |
+| Q-08 | hub の code 配置が README tree と違うこと（hub は origin/main 時点の `backend/app` 17 file で、`app/services/rules.py`・`app/services/tools.py`・`app/services/chat.py` が hub 名。Phase 1 が新設する `api/`・`db/`・`repositories/`・`services/rule_service.py`・`services/search_service.py`・`services/approval_service.py` は hub に 0 件、`app/models/` も hub 側に 0 件） | hub file は変更せず adapter で橋渡しし（決定 1.14・§2.8）、README §3 tree L136-172 の file 名で Phase 1 module を新設する | README §15 Phase 1 L1258 の「実装内容」L1262-1267 と §3 tree L136-172 の対応表。Phase 1 には numbered tool block が無い（tool 名は Phase 2 L1282-1285 の search_rules・get_rule・propose_rule・evaluate_rule） | 差異 D-11、決定 1.14、§2.4.4、§2.8 |
+| Q-09 | hub status の 3 値（`app/services/rules.py` の `RuleStatus = str` L13 の comment と `RULE_STATUSES = ("pending", "active", "tombstoned")` L16、dataclass の既定値 `status: RuleStatus = "pending"` L51）と README status 5 値（§4.5 L325-329）の対応 | README 5 値を正本とし hub 3 値を map する（§2.2 状態遷移表）。hub が README の 5 値を持つ時期は #2 まで保留 | README §4.5 と hub vocabulary の対応表、hub 側の tombstoned の README 名（archived と rejected の区別） | 差異 D-06、§2.2 |
+| Q-10 | `pending_approval` の却下操作後の状態と本文の扱い、同一 id の再提案可否（README §9.5 L849・L851、status `rejected` L328） | 却下は `rejected` とし、active へ昇格させない。本文は削除しない | README §4.5・§9.5 への条項追記 | §2.2 |
+| Q-11 | 時刻の生成・保存形式。README は §4.2 サンプルの `created_at` L263・`updated_at` L264 が `2026-11-07T10:00:00+09:00`（秒精度 + 固定 offset）で、§17 L1415 が Asia/Tokyo を要求するが、naive な値の解釈、保存精度、UTC 保存の可否、§11 のテーブル L968-1009 の `created_at` / `updated_at` / `reviewed_at` 以外に承認・却下・archive の時刻列を置くかを規定しない | Markdown front matter は README L263/L264 と byte 一致する `datetime.isoformat(timespec="seconds")` 表示に固定（hub `app/clock.py` の `tokyo_iso()` L27-32 は milliseconds 形式なので front matter には使わない）。naive な値は持たず、DB の rule 系列（`rules.created_at` と rule text の `created_at`）は hub の先行例（`app/clock.py` L12-13 の Asia/Tokyo と `+09:00` fallback）に合わせて Asia/Tokyo offset 付き ISO text で書く | README への時刻条項の追記（保存形式、精度、naive 値の扱い、DB に追加する時刻列の名前）、README の front matter sample は datetime 形式のみ（L263/L264）で §4.3 L291-303 の 13 属性に date 専用属性も無いため、date だけの値を認めるかの規定が無い点、§4.3 へ `approved_at` 等の列を追加するか（§2.4.1 で front matter に追加しない方針を決めている） | 差異 D-10、§2.4.1、hub clock precedent（`app/clock.py` L12-32） |
