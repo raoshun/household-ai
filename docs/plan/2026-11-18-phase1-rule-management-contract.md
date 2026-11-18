@@ -83,7 +83,7 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.1 | README 優先 | README §4・§8・§10・§11・§12・§13.4・§14・§15・§17・§18・§20 を正本とし、Phase 1 の実装単位のみを追加する。実装コミットは `#8`、README 更新は `#2`。 | ユーザー決定、§13.4 L1146-1148 |
 | 1.2 | ルール正本 | Markdown ファイル。DB は検索用インデックス・承認状態・履歴・メタデータのみ保持。 | §4.1 L234/L236/L240 |
 | 1.3 | ルール identity | 1 rule = 1 系の `rules` row + effective バージョン pointer + pending 候補 version。提案の新規作成、改訂、旧版復元、active 化、archived、拒否は同一 `rules.id` の状態遷移とし、識別子を切り替えない。status 遷移だけで version は上げない。 | §4.6 L337-360、§9.5 L845-854、§14.3 L1212-1216、§11.3-§11.5 |
-| 1.4 | カテゴリ | `rules.category`（§11.3 L970）と front matter `category`（§4.2 L248）が一意の source。`data/rules/` 直下の 6 slug（parenting・education・health・lifestyle・finance・general、§3 L184-195）を Phase 1 が定義する。カテゴリ別 table も hub 由来 vocabulary も作らない。 | §3 L184-195、§4.2 L248、§9.3 L814 |
+| 1.4 | カテゴリ | `rules.category`（§11.3 L970）と front matter `category`（§4.2 L248）が一意の source。`data/rules/` 直下の 6 slug（parenting・education・health・lifestyle・finance・general、§3 L199-204）を Phase 1 が定義する。カテゴリ別 table も hub 由来 vocabulary も作らない。 | §3 L199-204、§4.2 L248、§9.3 L812 |
 | 1.5 | 検索対象 | ルール名・基本方針・適用条件・例外条件・判断基準・タグの 6 項目（§8.1 L707-712）。カテゴリと status は検索語ではなく §8.2 のフィルタ stage（Filter by Status / Category L732）。Markdown 本文全文は検索対象にせず、§4.2 の 4 見出し（基本方針 L270 / 適用条件 L274 / 例外条件 L278 / 判断基準 L282）と front matter から §8.1 の 6 項目を抽出して index に投影する。README の rules 一覧 row（L915）には query が書かれていないため、カテゴリ・status の絞り込み表現は Phase 1 の query param 設計とする（§2.10 Q-01）。 | §8.1 L705-712、§8.2 L726-745、§10.2 L915-921 |
 | 1.6 | 検索対象 status | 既定は active のみ（「検索対象は原則としてactiveのルールとする。」）。pending_approval は正式な判断根拠にしない。 | §8.2 L743/L745、§14.1 L1158-1159 |
 | 1.7 | 検索 limit | Phase 1 backend の検索 API は `limit` を既定 10・上限 20 で clamping する。README に検索 limit を課す sentence は無い（README grep: 「上限」「表示件数」「件数」はいずれも 0 件）。根拠は §6.2 入力例 `"limit": 10` L496 と §14.1 L1157「無関係なルールが過剰に返されない。」の 2 つで、上限値 20 は Phase 1 判断として §2.10 Q-03 に登記する。 | §6.2 L492-497、§8.2 L741、§14.1 L1157 |
@@ -94,7 +94,7 @@ read_rules の入力は `{status: "active"|<state>|all|None, query, limit}`（li
 | 1.12 | HTTP scope | Phase 1 の成果物は §15 L1270「ルール管理API。」。rules API（§10.2 L915-921 の 7 row）と approvals API（§10.3 L927-930 の 4 row）、それらが使う repository / service / codec / index のみはこの契約で決める。hub の `ui-bridge` が既に確定させている rules / approvals / history 用語（Phase 0 UI 契約 §4）と衝突させたままにはしない。chat / session / AG-UI bridge は §12 のスコープ外として Phase 2 の HTTP 契約で決める。 | §15 L1266-1273、§10.2 L913-921、§10.3 L925-932、Phase 0 UI 契約 L71-112 |
 | 1.13 | 検証 | unit + integration pytest を pinned image の make targets で走る。host へ pip install しない。 | §18 L1438/L1439、§20 L1504-1518 |
 | 1.14 | Phase 0 との境界 | hub の `services/rules.py` / `services/tools.py` は残置し、hub vocabulary と README vocabulary を adapter で橋渡しする。hub 内部 API・frames・grant 契約を変えない。 | §13.4 L1110-1151、§7 hub contract L71-112 |
-| 1.15 | gate 維持 | 既存の gate（`make gate` L52-53）と proof gate（L55-56）、FTS probe（L58-59）は変更しない。Phase 1 は rules 用の unit / integration pytest を追加し、`make gate` の既存 checks を狭めない。 | `Makefile` L52-59、§20 L1500-1519 |
+| 1.15 | gate 維持 | 既存の gate（`make gate` L52-53）と proof gate（L55-56）、pinned SDK probe（`probe` target L58-59）は変更しない。Phase 1 は rules 用の unit / integration pytest を追加し、`make gate` の既存 checks を狭めない。 | `Makefile` L52-59、§20 L1500-1519 |
 
 ## 2. Phase 1 契約
 
