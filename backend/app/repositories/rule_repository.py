@@ -91,11 +91,11 @@ def _render_front_matter_entry(key: str, value: object) -> list[str]:
         if not value:
             # 実測 §2.4.5 4: 空 list は `key: []` の flow style で render される。
             return [f"{key}: []"]
-        return [f"{key}:", *(f"  - {_render_scalar(item)}" for item in value)]
-    return [f"{key}: {_render_scalar(value)}"]
+        return [f"{key}:", *(f"  - {_render_scalar(key, item)}" for item in value)]
+    return [f"{key}: {_render_scalar(key, value)}"]
 
 
-def _render_scalar(value: object) -> str:
+def _render_scalar(field: str, value: object) -> str:
     if value is None:
         # 承認されていない rule の approved_by は README に表記例が無い。13 attribute を
         # 常に書くため null で書き、load 時は model の default None に復元する。
@@ -103,7 +103,7 @@ def _render_scalar(value: object) -> str:
     if isinstance(value, datetime):
         # timestamp は README L263-264 の unquoted ISO (`T` + 固定 offset)。PyYAML の
         # datetime dump は space 区切りになるため使わない (実測 §2.4.5 2)。
-        return _require_single_line(value.isoformat())
+        return _require_single_line(_render_timestamp(field, value))
     if isinstance(value, Enum):
         # sample は enum を plain scalar (README L247-248) で書く。PyYAML に enum を
         # 渡すと `!!python/object/apply:` の python 専用 tag になり safe_load できない。
@@ -112,6 +112,24 @@ def _render_scalar(value: object) -> str:
         value, default_flow_style=True, allow_unicode=True, sort_keys=False
     )
     return _require_single_line(dumped)
+
+
+def _require_aware_timestamp(field: str, value: datetime) -> datetime:
+    # README §4.2 sample L263-264 は offset 付き の 時刻 で、§17 L1415 は Asia/Tokyo を
+    # 要求 し、契約 Q-11 も naive な 値 を 持た ない 方針。README の 表記 に 対応 しない
+    # naive は render 側 で だけ reject し、load 側 は relaxed の まま (決定 1.18 と
+    # 同じ 方針、1.19 で 登記)。
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        msg = f"front matter の {field} は timezone offset 付き datetime で書く"
+        raise RuleMarkdownError(msg)
+    return value
+
+
+def _render_timestamp(field: str, value: datetime) -> str:
+    # README L263-264 と 契約 Q-11 の Phase 1 方針どおり、正本 表記 を 秒 precision の
+    # ISO text に 固定 し、micro second を 持つ value は 切捨て る (決定 1.19 で 登記)。
+    # codec は source の offset を 変換 しない。
+    return _require_aware_timestamp(field, value).isoformat(timespec="seconds")
 
 
 def _require_single_line(rendered: str) -> str:
