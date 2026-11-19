@@ -8,7 +8,7 @@ parse → render が不変であることを検証し、layout 破綻と model �
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -370,3 +370,80 @@ def test_render_rejects_value_that_breaks_front_matter_line() -> None:
             _front_matter(tags=["段落1\n段落2"]),
             _body(),
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [
+        pytest.param(
+            "created_at",
+            "created_at: 2026-11-07T10:00:00+09:00",
+            id="created_at",
+        ),
+        pytest.param(
+            "updated_at",
+            "updated_at: 2026-11-07T10:00:00+09:00",
+            id="updated_at",
+        ),
+    ],
+)
+def test_render_writes_timestamp_as_readme_style_iso_text(
+    field: str, expected: str
+) -> None:
+    # README L263-264 は `T` 区切り・秒 precision・固定 offset の unquoted ISO text。
+    # Pydantic dump の `2026-11-07 10:00:00+09:00` や PyYAML dump の space 区切りでは
+    # ない 表記 を file へ 書く (決定 1.19)。
+    rendered = render_rule_markdown(_front_matter(), _body())
+
+    assert f"{expected}\n" in rendered
+    assert field in _front_matter_keys(rendered)
+
+
+def test_render_truncates_sub_second_timestamp_and_stays_stable() -> None:
+    # 模型 は micro second まで 持てる が README の 表記 は 秒 precision。切捨てた
+    # text を parse し直すと 同一 byte 列 に render する こと を 実測 で 確認 した。
+    precise = datetime(2026, 11, 7, 10, 0, 0, 123456, tzinfo=JST)
+
+    rendered = render_rule_markdown(_front_matter(created_at=precise), _body())
+
+    assert "created_at: 2026-11-07T10:00:00+09:00\n" in rendered
+    reparsed = parse_rule_markdown(rendered)
+    assert reparsed[0].created_at == CREATED_AT
+    assert render_rule_markdown(*reparsed) == rendered
+
+
+def test_render_keeps_source_offset_without_conversion() -> None:
+    # codec は source の offset を Asia/Tokyo へ 変換 しない (実測)。README §17 L1415 の
+    # Asia/Tokyo 要求 を どこ で 満たす か は generation 側 の 論点 で Q-11 に のこる。
+    utc_morning = datetime(2026, 11, 7, 1, 0, 0, tzinfo=UTC)
+
+    rendered = render_rule_markdown(_front_matter(created_at=utc_morning), _body())
+
+    assert "created_at: 2026-11-07T01:00:00+00:00\n" in rendered
+
+
+@pytest.mark.parametrize("field", ["created_at", "updated_at"])
+def test_render_rejects_naive_timestamp(field: str) -> None:
+    # README sample L263-264 には offset なしの 表記 が 無い ため naive は reject する。
+    # load 側 は relaxed の まま (決定 1.18 と 同じ 方針)。
+    naive = datetime(2026, 11, 7, 10, 0, 0)
+
+    with pytest.raises(RuleMarkdownError, match="timezone offset 付き"):
+        render_rule_markdown(_front_matter(**{field: naive}), _body())
+
+
+def test_parse_accepts_naive_timestamp_but_render_rejects_it() -> None:
+    # offset の 無い ISO text は 受理 し naive datetime に 復元 する が、その model は
+    # render できない (決定 1.19 の 非対称 な 受け 付け 方)。
+    relaxed = README_SAMPLE_RULE.replace(
+        "created_at: 2026-11-07T10:00:00+09:00",
+        "created_at: 2026-11-07 10:00:00",
+        1,
+    )
+
+    front_matter, body = parse_rule_markdown(relaxed)
+
+    assert front_matter.created_at == datetime(2026, 11, 7, 10, 0, 0)
+    assert front_matter.created_at.tzinfo is None
+    with pytest.raises(RuleMarkdownError):
+        render_rule_markdown(front_matter, body)
