@@ -27,18 +27,31 @@ def _write_migration(dir_path: Path, name: str, table: str) -> None:
 
 def test_real_migrations_dir_holds_expected_scripts() -> None:
     names = sorted(p.name for p in MIGRATIONS_DIR.glob("*.sql"))
-    assert names == ["0001_create_rule_tables.sql"]
+    assert names == [
+        "0001_create_rule_tables.sql",
+        "0002_create_rule_search_index.sql",
+    ]
 
 
-def test_real_migrations_create_four_tables(tmp_path) -> None:
+def test_real_migrations_create_tables_and_fts_index(tmp_path) -> None:
     conn = connect(tmp_path / "household.db")
     applied = apply_migrations(conn)
-    assert applied == 1
+    assert applied == 2
     names = {
         row["name"]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    assert {"rules", "rule_versions", "approvals", "judgment_logs"} <= names
+    assert {
+        "rules",
+        "rule_versions",
+        "approvals",
+        "judgment_logs",
+        "rule_search_index",
+    } <= names
+    # 決定 1.22: 0002 の ALTER TABLE rule_versions ADD COLUMN summary text に
+    # より実 DB へ反映される
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_versions)")}
+    assert "summary" in columns
     conn.close()
 
 

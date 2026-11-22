@@ -104,8 +104,8 @@ def test_init_database_creates_parent_and_tables(tmp_path, db_conn) -> None:
 
 def test_migrations_record_user_version_and_are_idempotent(db_conn) -> None:
     version = int(db_conn.execute("PRAGMA user_version").fetchone()[0])
-    assert version == 1
-    assert apply_migrations(db_conn) == 1  # 再実行しても昇らず table も壊れない
+    assert version == 2  # 0001 と 0002 の 2 file 分 (契約 §1 決定 1.21・1.22)
+    assert apply_migrations(db_conn) == 2  # 再実行しても昇らず table も壊れない
     count = db_conn.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
     assert count == 0
 
