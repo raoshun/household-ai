@@ -4,9 +4,9 @@
 index 側と query 側で単語の区切り方が違うと、term が一致して検索できなくなるため
 （README §8.2 L751）、分割規則は 1 箇所に固定する。
 
-実測 3 が示す通り、n-gram tokenizer と同じ規則は FTS5 の `trigrams` と `tokenchars`
-の併用でしか再現できず、決定 1.9 が認めた「application 側 n-gram」はこの単一関数で
-両側を揃える形で実装する（実測 §2.6.1）。
+実測 3 が示す通り、query 側の term は index 側 splitter が作った語彙でなければ当た
+りにいかない。よって決定 1.9 が認めた「application 側 n-gram」は、index と query
+両側の語彙をこの単一関数で揃える形で実装する（実測 §2.6.1）。
 
 - CJK run（決定 1.21 の codepoint-range で決める文字クラス）からは contiguous な
   2-gram と 3-gram を作る。長さ 1 の run はその 1 文字を term にする。
@@ -108,7 +108,7 @@ def split_search_text(text: str) -> SearchTerms:
         ascii_run.clear()
 
     # ASCII run は非英数字の境界で切る（決定 1.21、`[^0-9A-Za-z]+` と同値）。
-    # FTS5 の既定 tokenizer が `a-b` 等をどう分析するか（実測 6）は、application 側
+    # FTS5 の既定 tokenizer が `a-b` 等をどう分析するか（実測 4）は、application 側
     # 分割を採るここでは語彙の作り方には影響しない。
     for ch in text:
         if _is_cjk(ch):
