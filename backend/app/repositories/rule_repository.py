@@ -61,10 +61,12 @@ def render_rule_markdown(front_matter: RuleFrontMatter, body: RuleBody) -> str:
     return "\n".join(lines) + "\n"
 
 
-def parse_rule_markdown(text: str) -> tuple[RuleFrontMatter, RuleBody]:
-    """rule Markdown text を front matter と body へ分離する。
+def split_rule_markdown(text: str) -> tuple[str, str]:
+    """rule Markdown text を front matter text と body text へ分離する。
 
-    delimiter が無い、本文の 4 見出しが欠落・重複・順不同な text は rejected される。
+    API 層が front matter を server 値で上書きするため、まず構造だけを分離
+    する目的で public にする。delimiter が無い text は rejected される。本文の
+    4 見出しチェックは `parse_rule_body` の役割のため、ここでは行わない。
     """
     lines = text.splitlines()
     if not lines or lines[0] != FRONT_MATTER_DELIMITER:
@@ -81,9 +83,35 @@ def parse_rule_markdown(text: str) -> tuple[RuleFrontMatter, RuleBody]:
     if closing is None:
         msg = "rule Markdown text に closing `---` が無い"
         raise RuleMarkdownError(msg)
-    front_matter = _parse_front_matter("\n".join(lines[1:closing]))
-    body = _parse_body(lines[closing + 1 :])
-    return front_matter, body
+    return "\n".join(lines[1:closing]), "\n".join(lines[closing + 1 :])
+
+
+def parse_rule_front_matter(text: str) -> RuleFrontMatter:
+    """front matter text のみを RuleFrontMatter へ parse する。
+
+    YAML load 失敗・mapping 以外は `RuleMarkdownError`。attribute の型・domain・
+    欠損は pydantic の `ValidationError` (subclasses of ValueError) がそのまま出る
+    (rules Markdown codec の committed 済み挙動)。
+    """
+    return _parse_front_matter(text)
+
+
+def parse_rule_body(text: str) -> RuleBody:
+    """body text のみを RuleBody へ parse する。
+
+    4 見出し（`# 対象場面` / `# 方針` / `# 判定基準` / `# チャットでの案内手順`）が
+    欠落・重複・順不同な text は rejected される。
+    """
+    return _parse_body(text.splitlines())
+
+
+def parse_rule_markdown(text: str) -> tuple[RuleFrontMatter, RuleBody]:
+    """rule Markdown text を front matter と body へ分離する。
+
+    delimiter が無い、本文の 4 見出しが欠落・重複・順不同な text は rejected される。
+    """
+    front_matter_text, body_text = split_rule_markdown(text)
+    return parse_rule_front_matter(front_matter_text), parse_rule_body(body_text)
 
 
 def _render_front_matter_lines(front_matter: RuleFrontMatter) -> list[str]:

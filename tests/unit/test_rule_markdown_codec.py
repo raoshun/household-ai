@@ -16,9 +16,13 @@ from pydantic import ValidationError
 
 from app.models.rule import RuleBody, RuleFrontMatter
 from app.repositories.rule_repository import (
+    FRONT_MATTER_DELIMITER,
     RuleMarkdownError,
+    parse_rule_body,
+    parse_rule_front_matter,
     parse_rule_markdown,
     render_rule_markdown,
+    split_rule_markdown,
 )
 
 README_SAMPLE_RULE = """\
@@ -447,3 +451,47 @@ def test_parse_accepts_naive_timestamp_but_render_rejects_it() -> None:
     assert front_matter.created_at.tzinfo is None
     with pytest.raises(RuleMarkdownError):
         render_rule_markdown(front_matter, body)
+
+
+# --- public な split / 個別 parse (API 層の front matter 上書きのための入口) ---
+
+
+def test_split_rule_markdown_separates_texts_without_delimiters() -> None:
+    front_matter_text, body_text = split_rule_markdown(README_SAMPLE_RULE)
+
+    assert front_matter_text.startswith("id: ")
+    assert FRONT_MATTER_DELIMITER not in front_matter_text.splitlines()
+    assert body_text.lstrip("\n").startswith("# 基本方針")
+    # delimiter を戻して組み直すと元の byte 列に一致する (情報を失わない)。
+    assert f"---\n{front_matter_text}\n---\n{body_text}\n" == README_SAMPLE_RULE
+
+
+def test_split_rule_markdown_rejects_missing_delimiters() -> None:
+    with pytest.raises(RuleMarkdownError):
+        split_rule_markdown("# 基本方針\n\n本文。\n")
+    with pytest.raises(RuleMarkdownError):
+        split_rule_markdown(README_SAMPLE_RULE.rsplit("\n---\n", 1)[0])
+
+
+def test_split_rule_markdown_passes_through_broken_body() -> None:
+    # 4 見出しの検証は parse_rule_body の役割。split は layout を検査しない。
+    _front_matter_text, _body_text = split_rule_markdown(
+        README_SAMPLE_RULE.replace("# 判断基準", "# 判断根拠", 1)
+    )
+
+
+def test_public_parse_entries_match_parse_rule_markdown() -> None:
+    fm_flat, body_flat = parse_rule_markdown(README_SAMPLE_RULE)
+    front_matter_text, body_text = split_rule_markdown(README_SAMPLE_RULE)
+
+    assert parse_rule_front_matter(front_matter_text) == fm_flat
+    assert parse_rule_body(body_text) == body_flat
+
+
+def test_public_parse_entries_reject_own_breaks() -> None:
+    with pytest.raises(RuleMarkdownError, match="mapping"):
+        parse_rule_front_matter("- 1\n- 2")
+    with pytest.raises(ValidationError):
+        parse_rule_front_matter("id: parenting-001\ncategory: 存在しない")
+    with pytest.raises(RuleMarkdownError, match="見出し"):
+        parse_rule_body("# 基本方針\n\n本文のみ。")
