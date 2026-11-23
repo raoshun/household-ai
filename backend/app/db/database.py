@@ -48,10 +48,17 @@ def connect(db_path: Path) -> sqlite3.Connection:
     実測で既定 0 (off) を確認した `PRAGMA foreign_keys` を接続ごとに ON へ
     有効化する。行は `sqlite3.Row` で返し、カラム名アクセスを可能にする
     (実装判断)。
+
+    `check_same_thread=False`: connection は request 単位の open/close で、
+    使用は 1 request 内で strictly 逐次だが、async endpoint と threadpool
+    実行の dependency を 組み合わせると connection を 開いた thread 以外で
+    使う ため thread check を 外す (runtime image で 実測: 既定 True の
+    まま だと 500)。CPython の sqlite3 は threadsafe build で module 内部の
+    lock も あるため 実害 は ない (実装判断)。
     """
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
