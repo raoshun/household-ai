@@ -28,7 +28,7 @@ from typing import Any, cast
 
 import yaml
 
-from app.db.database import to_db_timestamp
+from app.db.database import from_db_timestamp, to_db_timestamp
 from app.models.rule import RuleBody, RuleCategory, RuleFrontMatter, RuleStatus
 from app.services.search_service import refresh_rule_index, split_search_text
 
@@ -235,6 +235,22 @@ class RuleVersionStateError(RuleRepositoryError):
 
 class RuleConsistencyError(RuleRepositoryError):
     """pointer の row・version row・md・hash の対応が壊れている (§1 決定 1.23)。"""
+
+
+class RuleIdSequenceExhaustedError(RuleRepositoryError):
+    """server 採番が rule id を作れない (§1 決定 1.30(2) の 500)。
+
+    2 つの 経路: category 内の 連番 が 999 を 越える case と、UNIQUE
+    collision の +1 retry が 上限 回数 で 解けない case。999 超過 の policy は
+    契約 #2 の 後続課題で、Phase 1 は 500 にする。
+    """
+
+
+class ApprovalTargetNotFoundError(RuleRepositoryError):
+    """審査対象 pending_approval の rule が無い (§1 決定 1.31(3) の 404)。
+
+    approvals row ではなく rules.status が審査対象の持主 (§1 決定 1.28/1.25)。
+    """
 
 
 # approvals.status の値域は README・契約のどちらにも register が無く、0001 の column
@@ -796,3 +812,207 @@ def load_rule_version(
         msg = f"md の hash が content_hash と不一致: {relative_path!r}"
         raise RuleConsistencyError(msg)
     return parse_rule_markdown(content)
+
+
+# ---------------------------------------------------------------------------
+# API 用の 読み出し query と server 採番 (契約 §1 決定 1.28/1.30/1.31)。
+# ---------------------------------------------------------------------------
+
+# 一覧 item の projection (決定 1.31(1))。SQL と dataclass の順を揃える。
+_RULE_LIST_COLUMNS = (
+    "id, title, category, status, rule_type, priority, current_version, updated_at"
+)
+_RULE_LIST_SQL_PREFIX = f"SELECT {_RULE_LIST_COLUMNS} FROM rules"
+_RULE_LIST_SQL_ORDER = " ORDER BY updated_at DESC, id DESC"
+
+
+@dataclass(frozen=True, slots=True)
+class RuleListItem:
+    """rules 一覧 の 1 item (決定 1.31(1) の 8 key)。"""
+
+    id: str
+    title: str
+    category: str
+    status: str
+    rule_type: str
+    priority: str
+    current_version: int
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RuleVersionListItem:
+    """rule_versions 1 row の version 一覧 item。
+
+    契約の version 一覧 の key (version と summary) に 作成・承認 の meta を
+    含む (決定 1.31(2))。content_hash は内部検証用で API に晒さない (§1 決定 1.23)。
+    """
+
+    version: int
+    summary: str | None
+    change_reason: str | None
+    created_by: str | None
+    approved_by: str | None
+    created_at: datetime
+
+
+def list_rules(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    category: str | None = None,
+) -> list[RuleListItem]:
+    """rules を filter 付きの一覧で返す (契約 §1 決定 1.30(4)/1.31(1))。
+
+    status・category は省略可で、渡した value だけの filter になる。value 域の
+    validation は API layer (Pydantic enum) が持ち、この layer は未知の value を
+    空の一覧に落とす。並びは updated_at DESC で、同値の tiebreak の id DESC は
+    contract 規定の無い impl 判断 (決定的な順が一覧に必要なため)。
+    """
+    clauses: list[str] = []
+    args: list[Any] = []
+    if status is not None:
+        clauses.append("status = ?")
+        args.append(status)
+    if category is not None:
+        clauses.append("category = ?")
+        args.append(category)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(_RULE_LIST_SQL_PREFIX + where + _RULE_LIST_SQL_ORDER, args)
+    return [_rule_list_item(_as_row(row)) for row in rows]
+
+
+def _rule_list_item(row: _Row) -> RuleListItem:
+    return RuleListItem(
+        id=cast("str", row["id"]),
+        title=cast("str", row["title"]),
+        category=cast("str", row["category"]),
+        status=cast("str", row["status"]),
+        rule_type=cast("str", row["rule_type"]),
+        priority=cast("str", row["priority"]),
+        current_version=cast("int", row["current_version"]),
+        updated_at=from_db_timestamp(cast("str", row["updated_at"])),
+    )
+
+
+def list_rule_versions(
+    conn: sqlite3.Connection, rule_id: str
+) -> list[RuleVersionListItem]:
+    """rule の version 一覧を新しい順で返す (契約 §1 決定 1.31(2))。
+
+    rules の row が無いのは 404 対象なので RuleNotFoundError。並びの新しい順は
+    contract に規定の無い impl 判断 (一覧と同じ「新しい順」に揃える)。
+    """
+    raw_rule = conn.execute("SELECT 1 FROM rules WHERE id = ?", (rule_id,)).fetchone()
+    if raw_rule is None:
+        msg = f"rules に id {rule_id!r} の row が無い"
+        raise RuleNotFoundError(msg)
+    rows = conn.execute(
+        "SELECT version, summary, change_reason, created_by, approved_by,"
+        " created_at"
+        " FROM rule_versions WHERE rule_id = ? ORDER BY version DESC",
+        (rule_id,),
+    )
+    return [
+        RuleVersionListItem(
+            version=cast("int", row["version"]),
+            summary=row["summary"],
+            change_reason=row["change_reason"],
+            created_by=row["created_by"],
+            approved_by=row["approved_by"],
+            created_at=from_db_timestamp(cast("str", row["created_at"])),
+        )
+        for row in rows
+    ]
+
+
+def fetch_pending_approval(conn: sqlite3.Connection, rule_id: str) -> RuleListItem:
+    """審査対象 1 件を pending_approval の限りで返す (§1 決定 1.28(1))。
+
+    承認待ち state は rules.status が持ち approvals table は読まない (§1 決定
+    1.25: approvals row は承認操作だけの writer)。rule が無いのも審査対象で無い
+    のも 404 approval_not_found に同じなので区別しない (§1 決定 1.31(3))。
+    """
+    row = conn.execute(
+        "SELECT " + _RULE_LIST_COLUMNS + " FROM rules WHERE id = ? AND status = ?",
+        (rule_id, RuleStatus.PENDING_APPROVAL.value),
+    ).fetchone()
+    if row is None:
+        msg = f"pending_approval の rule が無い: {rule_id!r}"
+        raise ApprovalTargetNotFoundError(msg)
+    return _rule_list_item(_as_row(row))
+
+
+# rules.id の PK collision text。sqlite の message は "UNIQUE constraint
+# failed: rules.id" の form (§1 決定 1.30(2) の retry 条件)。
+_UNIQUE_RULE_ID_TEXT = "UNIQUE constraint failed: rules.id"
+# 連続 UNIQUE の retry 上限は contract 規定の無い impl 判断。他 client との
+# 競走が続く場合は raise して 500 に落とす (§1 決定 1.31(3) の catch-all)。
+_NEW_ID_MAX_ATTEMPTS = 3
+
+
+def next_rule_id(conn: sqlite3.Connection, category: RuleCategory | str) -> str:
+    """category 毎の 3 桁 suffix の 既存 max + 1 の rule id を返す。
+
+    采番は §1 決定 1.30(2) の max + 1 零埋め 3 桁。999 が在れば
+    RuleIdSequenceExhaustedError (500 相当)。UNIQUE collision の +1 retry は
+    create_rule_with_new_id が担うので、この function 単体は rule id を作るだけ。
+    """
+    try:
+        prefix = RuleCategory(category).value
+    except ValueError as err:
+        msg = f"unknown category: {category!r}"
+        raise RuleRepositoryError(msg) from err
+    # GLOB の [0-9] 3 桁だけへ絞り、suffix 位置の substr で数値の max を取る。
+    # substr の 開始位置 len(prefix) + 2 は dash の straight (parenting-001 なら 11)。
+    max_suffix = conn.execute(
+        "SELECT MAX(CAST(substr(id, ?) AS INTEGER)) FROM rules WHERE id GLOB ?",
+        (len(prefix) + 2, f"{prefix}-[0-9][0-9][0-9]"),
+    ).fetchone()[0]
+    if max_suffix is None:
+        candidate = 1
+    else:
+        if max_suffix >= 999:
+            msg = f"rule id の 採番 が 3 桁の上限超过ぎ: {prefix!r}"
+            raise RuleIdSequenceExhaustedError(msg)
+        candidate = max_suffix + 1
+    return f"{prefix}-{candidate:03d}"
+
+
+def create_rule_with_new_id(
+    conn: sqlite3.Connection,
+    *,
+    rules_root: Path,
+    front_matter: RuleFrontMatter,
+    body: RuleBody,
+    change_reason: str | None = None,
+) -> RuleWriteResult:
+    """server 採番で id を上書きして create_rule する (§1 決定 1.30(2))。
+
+    front_matter.id は使わず category の 既存 max + 1 を毎回作り直す。採番の
+    straight 後に別の writer が同じ id を commit すると rules.id の UNIQUE に
+    当たるので、新しい max で 計算し直す = 結果として +1 の retry (§1 決定
+    1.30(2))。 UNIQUE 以外の sqlite3.IntegrityError はそのまま raise する。
+    front_matter.status や version は create_rule が §2.2 の値へ揃える。
+    """
+    last_error: sqlite3.IntegrityError | None = None
+    for _ in range(_NEW_ID_MAX_ATTEMPTS):
+        rule_id = next_rule_id(conn, front_matter.category)
+        numbered = front_matter.model_copy(update={"id": rule_id})
+        try:
+            return create_rule(
+                conn,
+                rules_root=rules_root,
+                front_matter=numbered,
+                body=body,
+                change_reason=change_reason,
+            )
+        except sqlite3.IntegrityError as err:
+            if _UNIQUE_RULE_ID_TEXT not in str(err):
+                raise
+            last_error = err
+    msg = (
+        f"rule id 採番 の UNIQUE collision が retry {_NEW_ID_MAX_ATTEMPTS} 回"
+        " 解消しない"
+    )
+    raise RuleIdSequenceExhaustedError(msg) from last_error
