@@ -86,6 +86,25 @@ def split_rule_markdown(text: str) -> tuple[str, str]:
     return "\n".join(lines[1:closing]), "\n".join(lines[closing + 1 :])
 
 
+def load_rule_front_matter_dict(text: str) -> dict[str, Any]:
+    """front matter text を model 検証 前の raw dict で 返す。
+
+    API が RuleFrontMatter 検証 前 に server 支配 の attribute (id など) の
+    指定 / 欠落 を 点検 する ため の public 入口。YAML load 失敗・mapping 以外は
+    `RuleMarkdownError` (§1 決定 1.31(3) の 422 系)。必須 欠落・unknown key を
+    そのまま 返し、model 検証 は caller (`parse_rule_front_matter` 等) の 役割。
+    """
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        msg = "rule Markdown の front matter が YAML として load できない"
+        raise RuleMarkdownError(msg) from exc
+    if not isinstance(loaded, dict):
+        msg = "rule Markdown の front matter が mapping でない"
+        raise RuleMarkdownError(msg)
+    return cast("dict[str, Any]", loaded)
+
+
 def parse_rule_front_matter(text: str) -> RuleFrontMatter:
     """front matter text のみを RuleFrontMatter へ parse する。
 
@@ -192,15 +211,9 @@ def _render_body_lines(body: RuleBody) -> list[str]:
 
 
 def _parse_front_matter(front_matter_text: str) -> RuleFrontMatter:
-    try:
-        loaded = yaml.safe_load(front_matter_text)
-    except yaml.YAMLError as exc:
-        msg = "rule Markdown の front matter が YAML として load できない"
-        raise RuleMarkdownError(msg) from exc
-    if not isinstance(loaded, dict):
-        msg = "rule Markdown の front matter が mapping でない"
-        raise RuleMarkdownError(msg)
-    return RuleFrontMatter.model_validate(loaded)
+    return RuleFrontMatter.model_validate(
+        load_rule_front_matter_dict(front_matter_text)
+    )
 
 
 def _parse_body(body_lines: list[str]) -> RuleBody:

@@ -18,6 +18,7 @@ from app.models.rule import RuleBody, RuleFrontMatter
 from app.repositories.rule_repository import (
     FRONT_MATTER_DELIMITER,
     RuleMarkdownError,
+    load_rule_front_matter_dict,
     parse_rule_body,
     parse_rule_front_matter,
     parse_rule_markdown,
@@ -495,3 +496,17 @@ def test_public_parse_entries_reject_own_breaks() -> None:
         parse_rule_front_matter("id: parenting-001\ncategory: 存在しない")
     with pytest.raises(RuleMarkdownError, match="見出し"):
         parse_rule_body("# 基本方針\n\n本文のみ。")
+
+
+def test_load_rule_front_matter_dict_returns_raw_dict_before_validation() -> None:
+    """API の 点検 用 に raw dict を model 検証 前に 返す。"""
+    raw = load_rule_front_matter_dict("id: client-tries-001\ntitle: タイトル")
+    assert raw == {"id": "client-tries-001", "title": "タイトル"}
+
+
+def test_load_rule_front_matter_dict_rejects_broken_yaml_and_non_mapping() -> None:
+    """YAML load 失敗・mapping 以外 は RuleMarkdownError。"""
+    with pytest.raises(RuleMarkdownError, match="YAML"):
+        load_rule_front_matter_dict("key: [unterminated")
+    with pytest.raises(RuleMarkdownError, match="mapping"):
+        load_rule_front_matter_dict("- 1\n- 2")
