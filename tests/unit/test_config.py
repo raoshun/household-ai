@@ -41,6 +41,7 @@ ENV_NAMES = (
     "AGENT_TURN_TIMEOUT_SECONDS",
     "SKILLS_ENABLED",
     "SKILLS_DISABLED",
+    "API_USERS_JSON",
 )
 
 
@@ -129,6 +130,7 @@ def test_load_settings_defaults(monkeypatch: MonkeyPatch, tmp_path) -> None:
     assert settings.log_level == "info"
     assert settings.enable_skills is True
     assert settings.session_store_enabled is False
+    assert settings.api_users_json == ""
 
 
 def test_load_settings_treats_empty_env_as_unset(monkeypatch: MonkeyPatch) -> None:
@@ -152,6 +154,14 @@ def test_load_settings_reads_env(monkeypatch: MonkeyPatch, tmp_path: Path) -> No
     assert settings.model == "gpt-4o-mini"
     assert settings.api_key == "env-key"
     assert settings.session_idle_timeout_seconds == 1500
+
+
+def test_load_settings_reads_api_users_json_raw(monkeypatch: MonkeyPatch) -> None:
+    _clear_env(monkeypatch)
+    raw = '[{"id":"shun","password_sha256":"' + "ab" * 32 + '","role":"admin"}]'
+    monkeypatch.setenv("API_USERS_JSON", raw)
+    settings = load_settings(Path.cwd())
+    assert settings.api_users_json == raw
 
 
 def test_load_settings_rejects_unknown_provider(monkeypatch: MonkeyPatch) -> None:
