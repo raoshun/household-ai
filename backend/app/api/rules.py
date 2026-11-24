@@ -184,7 +184,7 @@ def register_rule_problem_rules(emitter: ProblemEmitter) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _to_list_item(item: rule_repository.RuleListItem) -> RuleListItemResponse:
+def to_list_item(item: rule_repository.RuleListItem) -> RuleListItemResponse:
     return RuleListItemResponse(
         id=item.id,
         title=item.title,
@@ -210,7 +210,7 @@ def _to_version_item(
     )
 
 
-def _build_rule_detail(
+def build_rule_detail(
     conn: sqlite3.Connection, *, rules_root: Path, rule_id: str
 ) -> RuleDetailResponse:
     """md (正本) 基準 の 詳細 を 作る (決定 1.31(2))。
@@ -261,7 +261,7 @@ def list_rules(
         status=status.value if status is not None else None,
         category=category.value if category is not None else None,
     )
-    responses = [_to_list_item(item) for item in items]
+    responses = [to_list_item(item) for item in items]
     return RuleListResponse(count=len(responses), items=responses)
 
 
@@ -308,7 +308,7 @@ def get_rule(
 ) -> RuleDetailResponse:
     """rule 詳細 (md 正本 + hash 検証 決定 1.12/1.23・front matter 決定 1.19)。"""
 
-    return _build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
+    return build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +452,7 @@ async def create_rule(
         body=body,
         change_reason="作成",
     )
-    return _build_rule_detail(conn, rules_root=rules_root, rule_id=result.rule_id)
+    return build_rule_detail(conn, rules_root=rules_root, rule_id=result.rule_id)
 
 
 @router.put("/api/rules/{rule_id}", response_model=RuleDetailResponse)
@@ -523,7 +523,7 @@ async def revise_rule(
         expected_status=current_fm.status.value,
         change_reason="内容変更",
     )
-    return _build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
+    return build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
 
 
 @router.post("/api/rules/{rule_id}/restore", response_model=RuleDetailResponse)
@@ -581,4 +581,4 @@ def restore_rule_version(
         expected_status=current_fm.status.value,
         change_reason=f"v{version} による復元",
     )
-    return _build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
+    return build_rule_detail(conn, rules_root=rules_root, rule_id=rule_id)
