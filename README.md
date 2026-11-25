@@ -1005,7 +1005,7 @@ Rule APIとApproval APIのエラーはapplication/problem+json（RFC 9457）で�
 | 404 | `unknown_error.approval_not_found` | 承認対象が存在しないかpending_approvalではない |
 | 409 | `unknown_error.rule_version_state` | ruleのstatusがその操作を認めない状態 |
 | 409 | `unknown_error.rule_content_conflict` | 更新内容が現在のversionと同一 |
-| 422 | `validation_error.rule_text` | 入力校验を通過したが4.3の本文ルール（4つのH1など）に違反 |
+| 422 | `validation_error.rule_text` | 入力検証を通過したが4.3の本文ルール（4つのH1など）に違反 |
 
 ---
 
