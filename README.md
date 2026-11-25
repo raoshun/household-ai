@@ -284,6 +284,8 @@ approved_by: user
 食事への影響を優先して考える。
 ```
 
+created_atとupdated_atは秒精度と固定オフセット付きの時刻表記で記録する。オフセットの無い時刻や日付のみの値は受け付けない。
+
 ## 4.3 ルールの属性
 
 | 属性 | 説明 |
@@ -346,7 +348,7 @@ data/rules/parenting/
         v3.md
 ```
 
-最新版への参照を管理する。
+最新版への参照は常に最大のversion（未承認を含む）を指す。versionは複合主鍵の一部とし、revisionごとに作り直さず、番号は使い回さない。
 
 各変更について以下を記録する。
 
@@ -1011,6 +1013,8 @@ Rule APIとApproval APIのエラーはapplication/problem+json（RFC 9457）で�
 
 SQLiteに以下のテーブルを作成する。
 
+時刻列はTEXTにUTCのcanonical形式 `YYYY-MM-DDTHH:MM:SS.ffffff+00:00` （microseconds6桁必須）で保存し、CHECK制約で形式・範囲・暦を検証する。データベースは時計を読まず、呼び出し側が時刻を渡す。表示はAsia/Tokyo（+09:00）のオフセット付きとする。
+
 ## 11.1 conversations
 
 - id
@@ -1042,6 +1046,10 @@ SQLiteに以下のテーブルを作成する。
 - file_path
 - created_at
 - updated_at
+- approved_at
+- archived_at
+
+approved_atは承認時刻、archived_atはアーカイブ時刻で、サーバーのみが更新する。current_versionとfile_pathは常に最新のversion（未承認を含む）を指す。未承認の内容は検索結果に現れない。
 
 ## 11.4 rule_versions
 
@@ -1053,6 +1061,8 @@ SQLiteに以下のテーブルを作成する。
 - created_by
 - approved_by
 - created_at
+
+content_hashは4.2の形式でレンダリングしたルールMarkdownのbyte列のSHA-256を小文字16進で表したものとする。更新時に拒否するのはrules.current_versionが指すversionと同一のcontentを持つ場合のみとする。
 
 ## 11.5 approvals
 
