@@ -909,6 +909,8 @@ AIが提案したルールを一覧表示する。
 
 FastAPIで以下のAPIを実装する。
 
+Rule APIとApproval APIの全endpointは12.1のHTTP Basic認証を要求する。
+
 ## 10.1 Chat API
 
 | Method | Endpoint | 説明 |
@@ -1060,6 +1062,12 @@ SQLiteに以下のテーブルを作成する。
 家庭内ネットワーク限定であっても認証機能を設ける。
 
 初期段階ではシンプルなユーザー認証を実装する。
+
+Phase 1のHTTP APIはHTTP Basic (RFC 7617) を使う。ユーザーは環境変数 `API_USERS_JSON` のJSON配列 `[{"id": "...", "password_sha256": "...", "role": "..."}]` で管理する。`password_sha256` にはパスワードのSHA-256ダイジェストを16進小文字で保持し、平文のパスワードは保持しない。`API_USERS_JSON` が未設定または空配列のとき、APIは起動しない。
+
+承認・登録操作の `created_by` / `reviewed_by` は認証したユーザーの id をサーバーが設定する。
+
+`role` は admin・member を保持できるが、Phase 1では権限の分離に使わない。
 
 ユーザー単位の権限を考慮し、将来的に管理者・一般利用者を分けられる設計にする。
 
