@@ -1214,15 +1214,15 @@ tamper case `baked-secret-in-image`)。
 
 Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 の frontend / backend は、
 初期段階では runtime 1 service に集約し (frontend は Phase 3)、検証用 service を profile で分離する。
-`api` / `ui-bridge` は Phase 1 の UI ブリッジ用で profile 分離のため既存 track の挙動は変えない
-(実装は未完了。下記の局限参照)。
+`api` / `ui-bridge` は Phase 1 用で profile 分離のため既存 track の挙動は変えない
+(`api` は Rule / Approval API として実装済み、`ui-bridge` は未完了。下記の局限参照)。
 
 | service | profile | image | 用途 |
 | :--- | :--- | :--- | :--- |
 | `runtime` | 無し (default up) | `household-ai-runtime-test:0.1.0` | API / Agent 実行。`household-data` named volume を `/app/data` へ mount |
 | `gate` | `checks` | 同上 | lint / test / claims 検査。working tree を `:ro` で mount |
 | `proof` | `checks` | 同上 | offline / live の proof 実行。session store と runtime cache は `/tmp` 退避 |
-| `api` | `ui` | 同上 | Phase 1 の HTTP API (`uvicorn app.main:app`)。`127.0.0.1:8000` のみへ publish し `household-data` を mount |
+| `api` | `ui` | 同上 | Phase 1 の HTTP API (`uvicorn app.main:app`)。`API_USERS_JSON` (12.1) が必須。`127.0.0.1:8000` のみへ publish し `household-data` を mount |
 | `ui-bridge` | `checks` | 同上 | Phase 1 の UI ブリッジ live test (`pytest tests/live`)。証跡は `/out` (host の `.local/ui/out`)、状態は `/tmp` 退避。published port 無し |
 
 永続化は named volume `household-data` で行う (13.2 の「ホスト側のディレクトリ」は docker が
@@ -1246,8 +1246,11 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
 Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを
 対象とする (expand 生成は gate image に docker CLI が無いため host 側)、built-in tool への deny 応答は
-実測未取得 (unit test 検証)。`api` / `ui-bridge` は構成 (profile・mount・port・state 退避) までで、
-`backend/app/main.py` と `tests/live/` が未実装のため起動しない。frontend の UI と contract test
+実測未取得 (unit test 検証)。`ui-bridge` は構成 (profile・mount・port・state 退避) までで、`tests/live/` が未実装のため起動しない。
+`backend/app/main.py` は実装済みで、create_app が Phase 1 の Rule / Approval API を組み立てる。
+認証は fail-closed で、`API_USERS_JSON` が無いと起動しないため `api` service への設定が必要。
+`api` の実 `docker compose up` での起動証跡は依然未取得 (コンテナ内 uvicorn の smoke test のみ実施)。
+frontend の UI と contract test
 (vitest) は未作成 (docs/plan/2026-11-11-phase0-ui-implementation-contract.md §8・§14 が要求)。
 
 ---
@@ -1393,11 +1396,11 @@ Docker環境でチャットとCustom Toolsが動作する。→ 実測で確認�
 6. ルールのバージョン管理
 
 成果物：
-ルール管理API。
+ルール管理API・人間審査API。
 
 完了条件：
-ルールを登録・検索・更新できる。加えて Phase 0 gate (上記 1〜5) と §14.2 に追加した gate 項目
-(chat 応答の完了判定、認証状態の確認) の確認を含む。
+ルールを登録・検索・更新でき、人間が承認・却下・バージョン復元できる。加えて Phase 0 gate (上記 1〜5) と
+§14.2 に追加した gate 項目 (chat 応答の完了判定、認証状態の確認) の確認を含む。
 
 ## Phase 2：AI Agent統合
 
