@@ -128,6 +128,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 def test_phase1_endpoint_set_is_exactly_eleven(tmp_path: Path) -> None:
     """Phase 1 endpoint = 11。hub・history 由来 の route が 無 い 事 を 固定 する。"""
 
+    # GET /api/health (liveness) は openapi schema に 出さ ない ため ここ に は 現れ
+    # ない (test_health_is_public_liveness で 別途 検証)。
     assert endpoint_surface(create_app(settings_for(tmp_path))) == PHASE1_ROUTES
 
 
@@ -210,6 +212,14 @@ def test_endpoints_require_basic_auth(client: TestClient) -> None:
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"].startswith("Basic")
     assert response.json()["code"] == "unknown_error.unauthenticated"
+
+
+def test_health_is_public_liveness(client: TestClient) -> None:
+    """無 認証 の GET /api/health = compose healthcheck の 前提 (Phase 0 UI 契約)。"""
+
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "service": "household-ai-api"}
 
 
 def test_phase1_flow_smoke(client: TestClient) -> None:

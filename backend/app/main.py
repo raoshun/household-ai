@@ -3,9 +3,10 @@
 `uvicorn app.main:app` (README §13.4 L1122) で 起動 する app を 組み立てる。
 組立 内容 は 次 に 限定 する:
 
-- mount する の は 契約 §2.7.1 の 11 endpoint (rules 7 + approvals 4) だけ。
+- mount する 業務 endpoint は 契約 §2.7.1 の 11 個 (rules 7 + approvals 4) だけ。
   Phase 0 hub 本来 の chat・HITL・tools router と history API は 載せ ない
-  (決定 1.28(2)・1.29・1.32)。
+  (決定 1.28(2)・1.29・1.32)。業務 endpoint に 加え 無 認証 の
+  `GET /api/health` (liveness) を 載せる (compose healthcheck 用)。
 - CORS は config.py 既存 の `api_cors_origins` を 再利用 する (決定 1.32)。
   Basic 認証 を browser から 送る ため credential を 許可 し、header は
   `Authorization` と `Content-Type` に 絞る。
@@ -23,6 +24,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.approvals import router as approvals_router
 from app.api.auth import build_authenticator, install_unauthenticated_handler
@@ -68,6 +70,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_unauthenticated_handler(app)
     app.include_router(rules_router)
     app.include_router(approvals_router)
+
+    # liveness だけ。compose の api healthcheck が 無 認証 で 叩ける 必要 が ある
+    # (docker-compose.yml L147-L152、Phase 0 UI 契約 §「GET /api/health」)。
+    # Basic 認証 の 下 に 置く と 起動 確認 自体 が credential を 要求 し 起動 不能 に
+    # なる ため 無 認証。返す の は 生 きている 事 だけ (DB・users は 見 ない) で
+    # Readiness 判定 に は 使わ ない。
+    @app.get("/api/health", include_in_schema=False)
+    def health() -> JSONResponse:
+        return JSONResponse(
+            status_code=200,
+            content={"status": "ok", "service": "household-ai-api"},
+        )
+
     return app
 
 
