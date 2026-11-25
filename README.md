@@ -771,6 +771,8 @@ Agent Evaluation
 
 検索結果は関連度順で返す。
 
+検索件数は既定10・上限20とする（上限を超える指定は拒否）。
+
 検索対象は原則としてactiveのルールとする。
 
 pending_approvalのルールは正式な判断根拠として使用しない。
@@ -953,6 +955,18 @@ data: {"message_id":"msg-001"}
 | POST | /api/rules/{id}/restore | バージョン復元 |
 | GET | /api/rules/search | ルール検索 |
 
+POST /api/rules と PUT /api/rules/{id} のbodyはルールMarkdownそのもの（Content-Type: text/markdown）とする。front matterの属性は4.2に沿うが、id・version・status・created_at・updated_atはサーバーが管理するためbodyのfront matterにidを含めない。idはサーバーが `<category>-<3桁の連番>` で採番する（連番は同一categoryの既存最大値+1）。作成の成功時は201を返し、作成されたpending_approvalのルールを返す。
+
+GET /api/rulesは任意のqueryパラメータ status・category を受け付け、updated_atの降順で返す。
+
+GET /api/rules/{id} の詳細はfront matterの属性と現在versionの本文全文とversion一覧を返す。
+
+POST /api/rules/{id}/restoreはqueryパラメータ version を受け付け、過去のversionの本文から新しいACTIVEのversionを作り直す。復元は人間の操作であり承認を経ない。
+
+GET /api/rules/searchはq（必須）・status（既定active）・category（任意）・limit（既定10・上限20）を受け付け、関連度順で返す。
+
+APIが返す時刻はAsia/Tokyoのオフセット付き（+09:00）で表示する。
+
 ## 10.3 Approval API
 
 | Method | Endpoint | 説明 |
@@ -964,12 +978,32 @@ data: {"message_id":"msg-001"}
 
 承認APIは認証された人間の操作のみ許可する。
 
+承認待ち一覧と承認対象詳細は rules の pending_approval の投影とする。
+
+承認・却下のbodyは任意の審査comment `{"review_comment": "..."}` のみを受け付け、versionやidの指定は受け付けない。`reviewed_by` と `reviewed_at` はサーバーが設定する。
+
+却下されたルールは status が rejected になり、本文は保持される。却下後に有効化する経路はバージョン復元とする。
+
 ## 10.4 History API
 
 | Method | Endpoint | 説明 |
 |---|---|---|
 | GET | /api/history | 判断履歴一覧 |
 | GET | /api/history/{id} | 判断履歴詳細 |
+
+## 10.5 エラー表現
+
+Rule APIとApproval APIのエラーはapplication/problem+json（RFC 9457）で返す。codeは `unknown_error.<slug>` または `validation_error.<slug>` の形式とする。Phase 1で発生し得るcodeは `unknown_error.*` のみで、`validation_error.*` は決定済みだがPhase 1では発生しない。
+
+| HTTP status | code | 意味 |
+|---|---|---|
+| 400 | `unknown_error.invalid_request` | Markdownが解釈できない、restoreのversionが不正、front matter不正の全般 |
+| 401 | `unknown_error.unauthenticated` | 認証資格情報の欠落・不一致 |
+| 404 | `unknown_error.rule_not_found` | rule_idが存在しない |
+| 404 | `unknown_error.approval_not_found` | 承認対象が存在しないかpending_approvalではない |
+| 409 | `unknown_error.rule_version_state` | ruleのstatusがその操作を認めない状態 |
+| 409 | `unknown_error.rule_content_conflict` | 更新内容が現在のversionと同一 |
+| 422 | `validation_error.rule_text` | 入力校验を通過したが4.3の本文ルール（4つのH1など）に違反 |
 
 ---
 
