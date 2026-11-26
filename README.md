@@ -1251,6 +1251,18 @@ Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし�
 期待結果：
 仮定の質問を家庭内ルールとして登録しない。
 
+### gate 項目（Phase 1 の test 実装への割り当て）
+
+AI 判断のテストを実施する前提として、以下 2 項目を gate として Phase 1 の test 実装に割り当てる。
+
+| gate 項目 | 実測根拠 | 割り当て |
+| :--- | :--- | :--- |
+| chat 応答の完了判定 (session idle と turn 終了検知) | 1.0.29 では `session.idle` が turn 完了後にしか来ない (`docs/capability-matrix.md` §1)。**idle を receipt としない** 判定の gate test | Issue #3 |
+| 認証状態の確認 (`auth.getStatus` の reach) | BYOK は凭证不要、Connect 系は env token + `gh auth login --use-env` が確立手順 (§13.3)。凭证なしで green になる gate test | Issue #4 |
+
+この gate が green でない環境では、上記ケースA〜F の合否 (応答の完了前読み取り・認証状態の
+取り違え) が信頼できないものになるため、先に gate を green にする。
+
 ## 14.3 承認処理
 
 - 承認によってactiveになる。
