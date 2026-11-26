@@ -311,6 +311,18 @@ class FakeSdkSession:
         return result
 
 
+@dataclass
+class AuthStatus:
+    """GetAuthStatusResponse (auth.getStatus RPC 結果) 相当.
+
+    SDK 実体も dataclass で属性名は camelCase (isAuthenticated 等)。
+    """
+
+    isAuthenticated: bool = False
+    authType: str | None = None
+    login: str | None = None
+
+
 class FakeClient:
     """CopilotClient (1.0.29 相当) を模倣."""
 
@@ -323,6 +335,8 @@ class FakeClient:
         create_error: Exception | None = None,
         list_models_error: Exception | None = None,
         stop_error: Exception | None = None,
+        auth_status: AuthStatus | Exception | None = None,
+        supports_auth_status: bool = True,
     ) -> None:
         self.sessions_dir = sessions_dir
         self.model_ids = list(model_ids)
@@ -330,6 +344,10 @@ class FakeClient:
         self._create_error = create_error
         self._list_models_error = list_models_error
         self._stop_error = stop_error
+        self._auth_status = auth_status
+        if not supports_auth_status:
+            # 旧 SDK 模倣: get_auth_status を持たない Client に偽装する
+            self.get_auth_status = None  # type: ignore[method-assign]
         self.started = False
         self.stopped = False
         self.start_calls = 0
@@ -355,6 +373,11 @@ class FakeClient:
         self.create_kwargs.append(kwargs)
         self.sessions.append(session)
         return session
+
+    async def get_auth_status(self) -> AuthStatus:
+        if isinstance(self._auth_status, Exception):
+            raise self._auth_status
+        return self._auth_status or AuthStatus()
 
     async def list_models(self) -> list[ModelInfo]:
         # BYOK では real runtime が JsonRpcError(-32603, "Not authenticated") を投げる

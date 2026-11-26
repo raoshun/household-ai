@@ -15,6 +15,7 @@ from app.agent.events import AgentEvent, AgentEventType, TurnResult
 from app.agent.provider import (
     AgentProviderError,
     AgentSessionError,
+    ConnectStatus,
     ProviderHealth,
     ProviderUnavailableError,
     SessionRequest,
@@ -319,6 +320,38 @@ async def test_health_check_reflects_state() -> None:
     assert (after.ready, after.sessions) == (True, 1)
     await runtime.close_session(handle.session_id)
     assert (await runtime.health_check()).sessions == 0
+
+
+async def test_connect_status_は未起動でエラー() -> None:
+    runtime, _ = _make_runtime()
+    with pytest.raises(AgentRuntimeError):
+        await runtime.connect_status()
+
+
+async def test_connect_status_は_provider_未実装でも握りつぶす() -> None:
+    # この file の FakeProvider は connect_status を持たない (protocol 互換の確認)
+    runtime, _ = _make_runtime()
+    await runtime.start()
+    status = await runtime.connect_status()
+    assert (status.reachable, status.github_authenticated) == (False, False)
+    assert status.detail is not None and "未実装" in status.detail
+
+
+async def test_connect_status_は_provider_へ透過() -> None:
+    runtime, provider = _make_runtime()
+
+    async def _status() -> ConnectStatus:
+        return ConnectStatus(True, True, login="octocat")
+
+    provider.connect_status = _status  # type: ignore[method-assign,attr-defined]
+    await runtime.start()
+
+    status = await runtime.connect_status()
+    assert (status.reachable, status.github_authenticated, status.login) == (
+        True,
+        True,
+        "octocat",
+    )
 
 
 async def test_list_models_requires_start() -> None:
