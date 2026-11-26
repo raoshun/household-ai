@@ -1110,6 +1110,8 @@ volumes:
 
 初期段階ではSQLiteを使用するため、独立したDBコンテナは不要。
 
+コンテナ構成の実装済み shape (runtime 集約 + profile 分離の検証 track) は §13.4 に実表で管理する。
+
 ## 13.2 永続化
 
 以下を永続化する。
@@ -1119,17 +1121,35 @@ volumes:
 - 会話履歴
 - 設定情報
 
-データはホスト側のディレクトリに保存する。
+データはホスト側のディレクトリに保存する。→ 実装は docker 管理の named volume
+`household-data` (`/app/data`)。`./data` の bind mount は使わない (compose claims gate で固定、§13.4)。
+認証情報 (token) はどこにも永続化せず、host env からのみ注入する (§13.3)。
 
 ## 13.3 Copilot CLI
 
 Copilot SDKの実行に必要なCLIランタイムをコンテナ内で利用できるようにする。
 
-Python SDKが提供するCLI同梱方式を優先する。
+Python SDKが提供するCLI同梱方式を優先する。→ Phase 0 で実装: `github-copilot-sdk==1.0.29`
+(CLI runtime 1.0.107) を `docs/pinned-runtime-versions.json` で pin し、image 内
+`XDG_CACHE_HOME=/tmp/xdg-cache/github-copilot-sdk/cli/...` に展開する (host / offline build とも
+`make verify-pinned` で digest 照合)。
 
-認証状態をコンテナ再作成後も利用できるよう、認証情報の管理方法を検証する。
+認証情報をコンテナイメージに含めてはならない。→ claims gate で機械的に検証済み
+(`make gate-compose-claims` の credentials_not_baked / secrets_and_data_excluded_from_image、
+tamper case `baked-secret-in-image`)。
 
-認証情報をコンテナイメージに含めてはならない。
+認証状態をコンテナ再作成後も利用できるよう、認証情報の管理方法を検証する。→ Phase 0 / #4 実測:
+
+- BYOK の model 呼び出し (chat + Custom Tool) は GitHub 認証**不要** (token 無しで proof green)。
+- GitHub 凭证が必要な機能 (connector 等 Connect 系) は `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
+  `GITHUB_TOKEN` を host env で注入する (client 引数 `github_token` でも可。
+  **`COPILOT_GITHUB_TOKEN_FILE` は存在しない**)。
+- **env への token 透過だけでは `auth.getStatus` は authenticated にならない** (2026-11-22 実測)。
+  確立手順は token を env に置いたうえで `gh auth login --use-env` を実行すること。
+- runtime dir (`base_directory`) に credential state は永続化されない。コンテナ再作成後は
+  上記手順で再び認証する (BYOK 運用では認証状態に依存しない)。
+- 回帰 gate は Issue #4 で実装した (`make gate-auth-connect` と
+  `tests/proofs/phase1_auth_connect_probe.py`、PR #10)。
 
 ## 13.4 実装済みの構成と検証 track
 
@@ -1372,6 +1392,11 @@ Docker環境でチャットとCustom Toolsが動作する。
 家庭内ルール管理機能をMCP Serverとして公開する。
 
 これにより、他のAIクライアントからも同じルールを参照できるようにする。
+
+GitHub 系の MCP サーバー (Connect 相当) は凭证を要求するため、認証は §13.3 の確立手順
+(env + `gh auth login --use-env`) に従う。`list_models` が凭证なしの BYOK 構成で
+"Not authenticated" を返す点は Phase 0 実測済みで、実装は例外化して settings.model を返す
+(`docs/capability-matrix.md` §8)。
 
 将来的にMCP Apps対応ホストを用意し、ルール編集や承認画面をチャット内に表示することも検討する。
 
