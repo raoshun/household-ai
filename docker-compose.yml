@@ -99,6 +99,32 @@ services:
       - python
       - /app/tests/proofs/phase0_live_proof.py
 
+  # Issue #4: GitHub 凭证なしの起動回帰と auth.getStatus (Connect 状態) の
+  # reach を検証する gate。凭证が不要なまま実行できる (2026-11-22 実測)。
+  # 凭证を入れて確認するときだけ host の COPILOT_GITHUB_TOKEN を透過する
+  # (透過だけでは auth.getStatus は authenticated にならない点に注意。
+  # 確立手順は Issue #4: env に token を置いて gh auth login --use-env)。
+  auth-gate:
+    profiles: ["checks"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: household-ai-runtime-test:0.1.0
+    # gate と同じく working tree の code を読む (stale image 回避)。/app 直下を
+    # 覆わず .venv を隠さない 2 mount のみ。probe は状態を自前 mkdtemp (/tmp) に置く。
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./tests:/app/tests:ro
+    environment:
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      SESSION_IDLE_TIMEOUT_SECONDS: "600"
+    command:
+      - timeout
+      - "900"
+      - python
+      - /app/tests/proofs/phase1_auth_connect_probe.py
+      - --gate
+
   # --- Phase 1 UI布里ッジ (profiles: ui) -----------------------------------------
   # AG-UI / CopilotKit 連携用の API サーバー (backend/app/main.py)。profiles ["ui"] で
   # 分離しているので `docker compose up -d` や make gate / make proof の挙動は変えない。

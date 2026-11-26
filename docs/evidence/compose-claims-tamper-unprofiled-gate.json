@@ -3,7 +3,7 @@
   "tamper_mode": "unprofiled-gate",
   "tamper_marker": "gate profiles=[]",
   "target_claim": "phase0_compose_service_set",
-  "reject_reason": "ComposeClaimsError: phase0_compose_service_set 不合格: services=[\"api\", \"gate\", \"proof\", \"runtime\", \"ui-bridge\"] default_up=[\"gate\", \"runtime\"] profiles={\"api\": [\"ui\"], \"gate\": [], \"proof\": [\"checks\"], \"runtime\": [], \"ui-bridge\": [\"checks\"]}",
+  "reject_reason": "ComposeClaimsError: phase0_compose_service_set 不合格: services=[\"api\", \"auth-gate\", \"gate\", \"proof\", \"runtime\", \"ui-bridge\"] default_up=[\"gate\", \"runtime\"] profiles={\"api\": [\"ui\"], \"auth-gate\": [\"checks\"], \"gate\": [], \"proof\": [\"checks\"], \"runtime\": [], \"ui-bridge\": [\"checks\"]}",
   "guard_detected": true,
   "host_path_redaction": "host repo root 前方は <repo> へ mask 済み (--host-repo-root)"
 }

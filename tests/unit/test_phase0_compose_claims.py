@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT / "tests" / "proofs"))
 
 from phase0_compose_claims_probe import (  # noqa: E402
     _TAMPER_CLAIMS,
+    AUTH_GATE_SERVICE_NAME,
     CHECKS_PROFILE,
     COMPOSE_SERVICE_NAMES,
     DATA_MOUNT_TARGET,
@@ -66,6 +67,7 @@ EXPECTED_CLAIM_IDS: tuple[str, ...] = (
     "data_volume_mount",
     "host_ollama_gateway",
     "gate_uses_working_tree_ro",
+    "auth_gate_connect_wiring",
     "proof_state_in_container_tmp",
     "secrets_and_data_excluded_from_image",
     "ui_bridge_state_and_mounts",
@@ -101,6 +103,21 @@ services:
       AI_API_KEY: ${AI_API_KEY:-local-dummy}
     extra_hosts:
       - host.docker.internal:host-gateway
+  auth-gate:
+    profiles: ["checks"]
+    image: household-ai-runtime-test:0.1.0
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./tests:/app/tests:ro
+    environment:
+      COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
+      SESSION_IDLE_TIMEOUT_SECONDS: "600"
+    command:
+      - timeout
+      - "900"
+      - python
+      - /app/tests/proofs/phase1_auth_connect_probe.py
+      - --gate
   api:
     profiles: ["ui"]
     image: household-ai-runtime-test:0.1.0
@@ -218,6 +235,38 @@ EXPANDED_CONFIG: dict[str, Any] = {
             },
             "extra_hosts": [HOST_GATEWAY],
         },
+        AUTH_GATE_SERVICE_NAME: {
+            "image": DEFAULT_IMAGE,
+            "profiles": [CHECKS_PROFILE],
+            "working_dir": "/app/backend",
+            "volumes": [
+                {
+                    "type": "bind",
+                    "source": "/host/worktree/backend/app",
+                    "target": GATE_MOUNT_TARGETS[0],
+                    "read_only": True,
+                    "bind": {},
+                },
+                {
+                    "type": "bind",
+                    "source": "/host/worktree/tests",
+                    "target": GATE_MOUNT_TARGETS[1],
+                    "read_only": True,
+                    "bind": {},
+                },
+            ],
+            "environment": {
+                "COPILOT_GITHUB_TOKEN": "",
+                "SESSION_IDLE_TIMEOUT_SECONDS": "600",
+            },
+            "command": [
+                "timeout",
+                "900",
+                "python",
+                "/app/tests/proofs/phase1_auth_connect_probe.py",
+                "--gate",
+            ],
+        },
         UI_SERVICE_NAME: {
             "image": DEFAULT_IMAGE,
             "profiles": [UI_PROFILE],
@@ -332,6 +381,7 @@ def test_measured_records_compose_facts_used_by_claims() -> None:
         UI_SERVICE_NAME: [f"{NAMED_DATA_VOLUME}:/app/data"],
         "gate": [],
         "proof": [],
+        AUTH_GATE_SERVICE_NAME: [],
         UI_BRIDGE_SERVICE_NAME: [],
     }
     assert all(

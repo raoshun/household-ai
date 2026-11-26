@@ -56,11 +56,24 @@ GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof")
 RUNTIME_SERVICE_NAME = "runtime"
 UI_SERVICE_NAME = "api"
 UI_BRIDGE_SERVICE_NAME = "ui-bridge"
+AUTH_GATE_SERVICE_NAME = "auth-gate"
 UI_PROFILE = "ui"
-CHECKED_GATE_SERVICE_NAMES: tuple[str, ...] = ("gate", "proof", "ui-bridge")
+CHECKED_GATE_SERVICE_NAMES: tuple[str, ...] = (
+    "gate",
+    "proof",
+    "ui-bridge",
+    AUTH_GATE_SERVICE_NAME,
+)
 HOST_GATEWAY_SERVICE_NAMES: tuple[str, ...] = ("runtime", "proof", "api", "ui-bridge")
 COMPOSE_SERVICE_NAMES: frozenset[str] = frozenset(
-    {"gate", "proof", "runtime", UI_SERVICE_NAME, UI_BRIDGE_SERVICE_NAME}
+    {
+        "gate",
+        "proof",
+        "runtime",
+        UI_SERVICE_NAME,
+        UI_BRIDGE_SERVICE_NAME,
+        AUTH_GATE_SERVICE_NAME,
+    }
 )
 UI_PUBLISHED_PORT = 8000
 UI_LOOPBACK_BINDS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -359,6 +372,10 @@ def collect_measured(
             for part in (services.get(UI_BRIDGE_SERVICE_NAME, {}).get("command") or [])
         ),
         "gate_python_path": _env(services.get("gate", {})).get("PYTHONPATH", ""),
+        "auth_gate_command": " ".join(
+            str(part)
+            for part in (services.get(AUTH_GATE_SERVICE_NAME, {}).get("command") or [])
+        ),
         "compose_credential_literals": _credential_compose_literals(compose_text),
         "dockerfile_copy_sources": _dockerfile_copy_sources(dockerfile_text),
         "dockerignore_excluded": _dockerignore_names(dockerignore_text),
@@ -456,6 +473,20 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
         ),
         json.dumps(gate_volumes, ensure_ascii=False),
     )
+    auth_gate_volumes = measured["service_volumes"].get(AUTH_GATE_SERVICE_NAME, [])
+    check(
+        "auth_gate_connect_wiring",
+        all(
+            any(entry.endswith(f":{target}:ro") for entry in auth_gate_volumes)
+            for target in GATE_MOUNT_TARGETS
+        )
+        and "phase1_auth_connect_probe.py" in measured["auth_gate_command"]
+        and "--gate" in measured["auth_gate_command"],
+        "volumes="
+        + json.dumps(auth_gate_volumes, ensure_ascii=False)
+        + " command="
+        + measured["auth_gate_command"],
+    )
     proof_state = measured["proof_state_dirs"]
     check(
         "proof_state_in_container_tmp",
@@ -528,6 +559,7 @@ def verify_claims(measured: dict[str, Any]) -> list[tuple[str, str]]:
                 "gate",
                 "proof",
                 UI_BRIDGE_SERVICE_NAME,
+                AUTH_GATE_SERVICE_NAME,
             )
         ),
         f"{UI_SERVICE_NAME} ports="
