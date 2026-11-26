@@ -1244,12 +1244,14 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 | live proof claims gate 再検証 | `make gate-live-proof-claims` | `live-proof-two-cases.json` + `test_live_proof_summary.py` (29 tests) |
 
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
-Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを
-対象とする (expand 生成は gate image に docker CLI が無いため host 側)、built-in tool への deny 応答は
-実測未取得 (unit test 検証)。`ui-bridge` は構成 (profile・mount・port・state 退避) までで、`tests/live/` が未実装のため起動しない。
+Phase 0 で未 closed の局限: claims 検査は expand 結果のみを対象とする (expand 生成は gate image に
+docker CLI が無いため host 側)、built-in tool への deny 応答は実測未取得 (unit test 検証)。
+`ui-bridge` は構成 (profile・mount・port・state 退避) までで、`tests/live/` が未実装のため起動しない。
 `backend/app/main.py` は実装済みで、create_app が Phase 1 の Rule / Approval API を組み立てる。
 認証は fail-closed で、`API_USERS_JSON` が無いと起動しないため `api` service への設定が必要。
-`api` の実 `docker compose up` での起動証跡は依然未取得 (コンテナ内 uvicorn の smoke test のみ実施)。
+`api` は使い捨て credentials を host の `.env` に置いて実 `docker compose up` で healthy 化し、
+Basic 認証付きでルール作成・承認・検索・version 一覧が通ることを確認済み (liveness は
+`GET /api/health` の 200 で判定、検証後の stack・volume・credentials は破棄)。
 frontend の UI と contract test
 (vitest) は未作成 (docs/plan/2026-11-11-phase0-ui-implementation-contract.md §8・§14 が要求)。
 
