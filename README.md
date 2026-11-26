@@ -694,6 +694,30 @@ APIキーなどの認証情報は設定ファイルに直接記述しない。
 
 Ollamaについては、Copilot SDKのBYOK対応プロバイダー・API形式との互換性を事前検証する。直接接続できない場合は、別のAgentProvider実装を追加する。
 
+BYOK (Ollama 等の provider 指定) は Phase 0 で実測 green 済み (host / Docker とも GitHub 凭证なしで
+chat + Custom Tool 実行。`docs/evidence/offline-runtime-proof-notes.md` §4)。provider 接続情報の env 名は
+`backend/README.md` の host 実行手順に従う。
+
+## 7.4 セッション作成引数（pinned 1.0.29 実測）
+
+`CopilotClient.create_session(...)` で 1.0.29 の実在を確認した kwargs:
+`model`, `provider`, `working_directory`, `system_message`, `available_tools`, `excluded_tools`,
+`tools`, `on_permission_request`, `enable_session_store`, `infinite_sessions`, `session_limits`,
+`large_output`, `hooks`, `skill_directories`, `disabled_skills`, `disabled_mcp_servers`,
+`agent`, `context_tier`, `streaming`, `name`, `session_id`, `reasoning_effort`
+(実測一覧は `docs/capability-matrix.md` §2)。
+
+このうち概念上の指定で **pinned に存在しない名前**は adapter 側で吸収する (使わない):
+
+| 概念上の指定 | 1.0.29 実測 | 吸収方法 |
+| :--- | :--- | :--- |
+| `permission_handler` | 無し | `on_permission_request` 引数で受ける |
+| `permission_mode` / `approval_mode` (session 単位) | 無し | Custom Tool の `skip_permission` と runtime 側 `ToolPolicy` で表現 |
+| `sessions_dir` / `session_store_dir` | 無し (`enable_session_store` のみ) | runtime dir を client の `base_directory` に固定 |
+| `provider_options` | 無し | `provider` 引数の型付き値で渡す |
+| `data_path` | 無し | client `base_directory` とアプリ側 `DATA_DIR` で管理 |
+| `session_idle_timeout_seconds` (session 単位) | 無し | client 引数に固定 (per-session 指定は不可) |
+
 ---
 
 # 8. ルール検索
