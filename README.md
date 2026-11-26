@@ -1297,7 +1297,18 @@ Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし�
 最小限のCopilot SDKチャットアプリ。
 
 完了条件：
-Docker環境でチャットとCustom Toolsが動作する。
+Docker環境でチャットとCustom Toolsが動作する。→ 実測で確認済み。実測結果そのものは
+本書に書かず、**Phase 1 の gate として残る項目**を以下に列挙する (Phase 1 は以下の gate を
+再実行して green であること完了条件の確認とする。target と証跡の詳細は §13.4 の検証表):
+
+1. `make lint test` — pinned image 内の import / ruff / unit test
+2. `make gate-compose-claims` / `make prove-compose-claims-tamper` — compose 構成 claims と
+   tamper (negative) 検証
+3. `make prove-live-proof-claims` / `make gate-live-proof-claims` — live proof 2 case の
+   claims gate (session idle と turn 終了検知の挙動を含む)
+4. `make verify-pinned` / `make prove-offline` / `make prove-offline-runtime` — pin digest と
+   offline runtime 証跡
+5. `make prove-negative-gates` — guard が defect を検出すること (negative gate)
 
 ## Phase 1：ルール管理基盤
 
@@ -1314,7 +1325,8 @@ Docker環境でチャットとCustom Toolsが動作する。
 ルール管理API。
 
 完了条件：
-ルールを登録・検索・更新できる。
+ルールを登録・検索・更新できる。加えて Phase 0 gate (上記 1〜5) と §14.2 に追加した gate 項目
+(chat 応答の完了判定、認証状態の確認) の確認を含む。
 
 ## Phase 2：AI Agent統合
 
