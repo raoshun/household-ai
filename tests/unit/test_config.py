@@ -193,3 +193,15 @@ def test_timeout_and_port_ranges_are_validated() -> None:
         Settings(session_idle_timeout_seconds=3601)
     with pytest.raises(ValidationError):
         Settings(port=70_000)
+
+
+def test_turn_timeout_must_fit_within_idle_timeout() -> None:
+    """§4 / §7.2 の関係: ターン上限は idle timeout 以内 (0=無効時は非制約)。"""
+    with pytest.raises(ValidationError, match="SESSION_IDLE_TIMEOUT_SECONDS 以下"):
+        Settings(turn_timeout_seconds=300, session_idle_timeout_seconds=60)
+    # 境界 (turn == idle) は許す
+    assert Settings(turn_timeout_seconds=60, session_idle_timeout_seconds=60)
+    # idle 無効 (0 = reaper なし) の限り idle < turn を許す
+    assert Settings(turn_timeout_seconds=300, session_idle_timeout_seconds=0)
+    # 既定値 (turn 180 / idle 900) は常に valid
+    assert Settings().turn_timeout_seconds == 180
