@@ -149,8 +149,8 @@ base prefix: `/api` (frontend は `/api/...` を `BACKEND_ORIGIN` へ rewrite)�
 | `monitor_replay_limit` | `MONITOR_REPLAY_LIMIT` | 200 | `>=1` |
 | `max_frames_per_thread` | `MAX_FRAMES_PER_THREAD` | 400 | `>=1` |
 | `monitor_heartbeat_seconds` | `MONITOR_HEARTBEAT_SECONDS` | 10 | `>=1` |
-| `session_idle_timeout_seconds` | `SESSION_IDLE_TIMEOUT_SECONDS` | 900 | `10..3600` (既存) |
-| `turn_timeout_seconds` | `AGENT_TURN_TIMEOUT_SECONDS` (既存 name) | 180 | `10..3600` (既存) |
+| `session_idle_timeout_seconds` | `SESSION_IDLE_TIMEOUT_SECONDS` | 900 | `0` (reaper 無効) または `10..3600`。有効時は `turn_timeout_seconds` 以上 (§7.2 / Issue #3) |
+| `turn_timeout_seconds` | `AGENT_TURN_TIMEOUT_SECONDS` (既存 name) | 180 | `10..3600` (既存)。`session_idle_timeout_seconds` が有効ならその以下 (§7.2 / Issue #3) |
 | `max_concurrent_turns` | `MAX_CONCURRENT_TURNS` | 4 | `>=1` |
 | `context_token_warning_threshold` | `CONTEXT_TOKEN_WARNING_THRESHOLD` | 0.8 (ratio) | `(0, 1]` |
 | `context_warning_cost_jpy` | `CONTEXT_WARNING_COST_JPY` | 20.0 | `>=0` |

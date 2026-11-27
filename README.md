@@ -666,6 +666,13 @@ class AgentProvider:
 
 Copilot SDKの実際のAPIをそのまま抽象インターフェースに流用せず、アプリケーション側で必要な機能を定義する。
 
+Chat応答の完了条件はpinned SDK 1.0.29の実装で確定した（Issue #3。`tests/unit/test_phase1_turn_completion_gate.py` で固定する）。
+
+- ターンの完了判定は `send_and_wait(prompt, timeout=AGENT_TURN_TIMEOUT_SECONDS)` の解決による。1.0.29には `session.status` の completed 相当のeventが無いため、eventによる完了判定は行わない。
+- idle（wire名 `session.idle` / `assistant.idle`）はAppへ正規化済みterminal event `session_idle` として公開するが、ターンの完了証明としては扱わない（Microsoft providerはターン完了前にもidleを送出する実測がある）。
+- 各ターンは必ず1件のterminal event（`session_idle` または `session_error`）で閉じる。完了待ちがtimeoutしたターンはaborted扱いとなり、idleが観測済みであっても完了として扱わない。
+- `SESSION_IDLE_TIMEOUT_SECONDS` はclientが無稼働の会話を保持する上限（超過でreaperが閉じる）であり、ターンの完了待ちとは別物である。有効時は `AGENT_TURN_TIMEOUT_SECONDS` 以上でなければならない（Settingsで検証。無効化は0）。
+
 ## 7.3 プロバイダー設定
 
 環境変数または設定ファイルで切り替えられるようにする。
