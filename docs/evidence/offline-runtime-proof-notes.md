@@ -298,3 +298,23 @@ exit 1 と failures 1 件を返す。evidence 往復で turn 数と tool 名が�
   測っていない
 - `--gate` を使わない集計実行は FAIL でも exit 0 で JSON を print する。検証に
   使うなら `--gate` か `--recheck-evidence` を使う
+
+## 8. 認証状態 / Connect gate (Issue #4)
+
+GitHub 凭证なしで動く BYOK 構成の回帰と、`auth.getStatus` (Connect 状態) の
+reach を検証する gate。実行は `make gate-auth-connect` (compose の `auth-gate`
+service、凭证不要)。
+
+```bash
+make gate-auth-connect   # 凭证なしで実行。期待違反は exit 1
+```
+
+- probe は [tests/proofs/phase1_auth_connect_probe.py](../../tests/proofs/phase1_auth_connect_probe.py)。
+  期待 1 (無凭证で SDK client 起動) と期待 3 (`auth.getStatus` が reach し凭证なしでは
+  unauthenticated) が必須、期待 2 (token handoff) は advisory
+- 2026-11-27 実測: `ok: true` / failures 0 / exit 0。`byok_start_ok: true`、
+  `connect.reachable: true` かつ `github_authenticated: false` (凭证透過なし)。
+  証跡は [auth-connect-gate.json](./auth-connect-gate.json)
+- token を env に透過しても `auth.getStatus` は authenticated にならない (2026-11-22
+  実測)。確立手順は README §13.3 のとおり env に token を置いて
+  `gh auth login --use-env`。gate は凭证なしで green であることを保証する
