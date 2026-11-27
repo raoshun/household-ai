@@ -1242,6 +1242,7 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 | compose 構成 claims (10 claims / tamper 6 とおり) | `make gate-compose-claims` | `compose-claims.json`, `compose-claims-tamper-*.json` (6 件) |
 | live proof 2 case claims (22 checks) | `make prove-live-proof-claims` | `live-proof-two-cases.json` を container `/out` 経由で evidence へ |
 | live proof claims gate 再検証 | `make gate-live-proof-claims` | `live-proof-two-cases.json` + `test_live_proof_summary.py` (29 tests) |
+| 認証状態 / Connect (`auth.getStatus` reach、凭证不要) | `make gate-auth-connect` | `auth-connect-gate.json` (手順は notes §8) |
 
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
 Phase 0 で未 closed の局限: claims 検査は expand 結果のみを対象とする (expand 生成は gate image に
@@ -1322,7 +1323,7 @@ AI 判断のテストを実施する前提として、以下 2 項目を gate �
 | gate 項目 | 実測根拠 | 割り当て |
 | :--- | :--- | :--- |
 | chat 応答の完了判定 (session idle と turn 終了検知) | 1.0.29 では `session.idle` が turn 完了後にしか来ない (`docs/capability-matrix.md` §1)。**idle を receipt としない** 判定の gate test | Issue #3 |
-| 認証状態の確認 (`auth.getStatus` の reach) | BYOK は凭证不要、Connect 系は env token + `gh auth login --use-env` が確立手順 (§13.3)。凭证なしで green になる gate test | Issue #4 |
+| 認証状態の確認 (`auth.getStatus` の reach) | BYOK は凭证不要、Connect 系は env token + `gh auth login --use-env` が確立手順 (§13.3)。凭证なしで green になる gate test | Issue #4 (実装・実測済み。`make gate-auth-connect`、証跡 `docs/evidence/auth-connect-gate.json`) |
 
 この gate が green でない環境では、上記ケースA〜F の合否 (応答の完了前読み取り・認証状態の
 取り違え) が信頼できないものになるため、先に gate を green にする。

@@ -1,0 +1,33 @@
+{
+  "gate": "auth-connect",
+  "issue": "#4",
+  "target": "make gate-auth-connect (docker compose --profile checks run --rm auth-gate)",
+  "probe": "tests/proofs/phase1_auth_connect_probe.py --gate",
+  "image": "household-ai-runtime-test:0.1.0",
+  "measured_at": "2026-11-27",
+  "credentials": "なし (host の COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN を一切透過せず実行)",
+  "exit_code": 0,
+  "payload": {
+    "ok": true,
+    "failures": [],
+    "notes": [],
+    "token_env_present": false,
+    "byok_start_ok": true,
+    "connect": {
+      "reachable": true,
+      "github_authenticated": false,
+      "login": null,
+      "auth_type": null,
+      "detail": null
+    }
+  },
+  "gate_requirements": [
+    "期待1: GitHub 凭证なしで SDK client (provider.start) が起動できる (BYOK 回帰)",
+    "期待3: auth.getStatus RPC が reach でき、凭证なしでは unauthenticated を返す",
+    "期待2 (advisory): token env の透過だけでは auth.getStatus は authenticated にならない。確立手順は env に token を置いて gh auth login --use-env (§13.3)。不一致は note として記録し gate は通す"
+  ],
+  "related": {
+    "unit_tests": "tests/unit/test_provider.py (connect_status 5 case) / tests/unit/test_agent_runtime.py (connect_status 透過 3 case)",
+    "compose_claims": "auth-gate service は compose-claims の service set / single_pinned_image / credentials_not_baked claims に含まれる"
+  }
+}
