@@ -701,6 +701,30 @@ APIキーなどの認証情報は設定ファイルに直接記述しない。
 
 Ollamaについては、Copilot SDKのBYOK対応プロバイダー・API形式との互換性を事前検証する。直接接続できない場合は、別のAgentProvider実装を追加する。
 
+BYOK (Ollama 等の provider 指定) は Phase 0 で実測 green 済み (host / Docker とも GitHub 凭证なしで
+chat + Custom Tool 実行。`docs/evidence/offline-runtime-proof-notes.md` §4)。provider 接続情報の env 名は
+`backend/README.md` の host 実行手順に従う。
+
+## 7.4 セッション作成引数（pinned 1.0.29 実測）
+
+`CopilotClient.create_session(...)` で 1.0.29 の実在を確認した kwargs:
+`model`, `provider`, `working_directory`, `system_message`, `available_tools`, `excluded_tools`,
+`tools`, `on_permission_request`, `enable_session_store`, `infinite_sessions`, `session_limits`,
+`large_output`, `hooks`, `skill_directories`, `disabled_skills`, `disabled_mcp_servers`,
+`agent`, `context_tier`, `streaming`, `name`, `session_id`, `reasoning_effort`
+(実測一覧は `docs/capability-matrix.md` §2)。
+
+このうち概念上の指定で **pinned に存在しない名前**は adapter 側で吸収する (使わない):
+
+| 概念上の指定 | 1.0.29 実測 | 吸収方法 |
+| :--- | :--- | :--- |
+| `permission_handler` | 無し | `on_permission_request` 引数で受ける |
+| `permission_mode` / `approval_mode` (session 単位) | 無し | Custom Tool の `skip_permission` と runtime 側 `ToolPolicy` で表現 |
+| `sessions_dir` / `session_store_dir` | 無し (`enable_session_store` のみ) | runtime dir を client の `base_directory` に固定 |
+| `provider_options` | 無し | `provider` 引数の型付き値で渡す |
+| `data_path` | 無し | client `base_directory` とアプリ側 `DATA_DIR` で管理 |
+| `session_idle_timeout_seconds` (session 単位) | 無し | client 引数に固定 (per-session 指定は不可) |
+
 ---
 
 # 8. ルール検索
@@ -1093,6 +1117,8 @@ volumes:
 
 初期段階ではSQLiteを使用するため、独立したDBコンテナは不要。
 
+コンテナ構成の実装済み shape (runtime 集約 + profile 分離の検証 track) は §13.4 に実表で管理する。
+
 ## 13.2 永続化
 
 以下を永続化する。
@@ -1102,17 +1128,35 @@ volumes:
 - 会話履歴
 - 設定情報
 
-データはホスト側のディレクトリに保存する。
+データはホスト側のディレクトリに保存する。→ 実装は docker 管理の named volume
+`household-data` (`/app/data`)。`./data` の bind mount は使わない (compose claims gate で固定、§13.4)。
+認証情報 (token) はどこにも永続化せず、host env からのみ注入する (§13.3)。
 
 ## 13.3 Copilot CLI
 
 Copilot SDKの実行に必要なCLIランタイムをコンテナ内で利用できるようにする。
 
-Python SDKが提供するCLI同梱方式を優先する。
+Python SDKが提供するCLI同梱方式を優先する。→ Phase 0 で実装: `github-copilot-sdk==1.0.29`
+(CLI runtime 1.0.107) を `docs/pinned-runtime-versions.json` で pin し、image 内
+`XDG_CACHE_HOME=/tmp/xdg-cache/github-copilot-sdk/cli/...` に展開する (host / offline build とも
+`make verify-pinned` で digest 照合)。
 
-認証状態をコンテナ再作成後も利用できるよう、認証情報の管理方法を検証する。
+認証情報をコンテナイメージに含めてはならない。→ claims gate で機械的に検証済み
+(`make gate-compose-claims` の credentials_not_baked / secrets_and_data_excluded_from_image、
+tamper case `baked-secret-in-image`)。
 
-認証情報をコンテナイメージに含めてはならない。
+認証状態をコンテナ再作成後も利用できるよう、認証情報の管理方法を検証する。→ Phase 0 / #4 実測:
+
+- BYOK の model 呼び出し (chat + Custom Tool) は GitHub 認証**不要** (token 無しで proof green)。
+- GitHub 凭证が必要な機能 (connector 等 Connect 系) は `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` /
+  `GITHUB_TOKEN` を host env で注入する (client 引数 `github_token` でも可。
+  **`COPILOT_GITHUB_TOKEN_FILE` は存在しない**)。
+- **env への token 透過だけでは `auth.getStatus` は authenticated にならない** (2026-11-22 実測)。
+  確立手順は token を env に置いたうえで `gh auth login --use-env` を実行すること。
+- runtime dir (`base_directory`) に credential state は永続化されない。コンテナ再作成後は
+  上記手順で再び認証する (BYOK 運用では認証状態に依存しない)。
+- 回帰 gate は Issue #4 で実装した (`make gate-auth-connect` と
+  `tests/proofs/phase1_auth_connect_probe.py`、PR #10)。
 
 ## 13.4 実装済みの構成と検証 track
 
@@ -1214,6 +1258,18 @@ Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし�
 期待結果：
 仮定の質問を家庭内ルールとして登録しない。
 
+### gate 項目（Phase 1 の test 実装への割り当て）
+
+AI 判断のテストを実施する前提として、以下 2 項目を gate として Phase 1 の test 実装に割り当てる。
+
+| gate 項目 | 実測根拠 | 割り当て |
+| :--- | :--- | :--- |
+| chat 応答の完了判定 (session idle と turn 終了検知) | 1.0.29 では `session.idle` が turn 完了後にしか来ない (`docs/capability-matrix.md` §1)。**idle を receipt としない** 判定の gate test | Issue #3 |
+| 認証状態の確認 (`auth.getStatus` の reach) | BYOK は凭证不要、Connect 系は env token + `gh auth login --use-env` が確立手順 (§13.3)。凭证なしで green になる gate test | Issue #4 |
+
+この gate が green でない環境では、上記ケースA〜F の合否 (応答の完了前読み取り・認証状態の
+取り違え) が信頼できないものになるため、先に gate を green にする。
+
 ## 14.3 承認処理
 
 - 承認によってactiveになる。
@@ -1260,7 +1316,18 @@ Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし�
 最小限のCopilot SDKチャットアプリ。
 
 完了条件：
-Docker環境でチャットとCustom Toolsが動作する。
+Docker環境でチャットとCustom Toolsが動作する。→ 実測で確認済み。実測結果そのものは
+本書に書かず、**Phase 1 の gate として残る項目**を以下に列挙する (Phase 1 は以下の gate を
+再実行して green であること完了条件の確認とする。target と証跡の詳細は §13.4 の検証表):
+
+1. `make lint test` — pinned image 内の import / ruff / unit test
+2. `make gate-compose-claims` / `make prove-compose-claims-tamper` — compose 構成 claims と
+   tamper (negative) 検証
+3. `make prove-live-proof-claims` / `make gate-live-proof-claims` — live proof 2 case の
+   claims gate (session idle と turn 終了検知の挙動を含む)
+4. `make verify-pinned` / `make prove-offline` / `make prove-offline-runtime` — pin digest と
+   offline runtime 証跡
+5. `make prove-negative-gates` — guard が defect を検出すること (negative gate)
 
 ## Phase 1：ルール管理基盤
 
@@ -1277,7 +1344,8 @@ Docker環境でチャットとCustom Toolsが動作する。
 ルール管理API。
 
 完了条件：
-ルールを登録・検索・更新できる。
+ルールを登録・検索・更新できる。加えて Phase 0 gate (上記 1〜5) と §14.2 に追加した gate 項目
+(chat 応答の完了判定、認証状態の確認) の確認を含む。
 
 ## Phase 2：AI Agent統合
 
@@ -1355,6 +1423,11 @@ Docker環境でチャットとCustom Toolsが動作する。
 家庭内ルール管理機能をMCP Serverとして公開する。
 
 これにより、他のAIクライアントからも同じルールを参照できるようにする。
+
+GitHub 系の MCP サーバー (Connect 相当) は凭证を要求するため、認証は §13.3 の確立手順
+(env + `gh auth login --use-env`) に従う。`list_models` が凭证なしの BYOK 構成で
+"Not authenticated" を返す点は Phase 0 実測済みで、実装は例外化して settings.model を返す
+(`docs/capability-matrix.md` §8)。
 
 将来的にMCP Apps対応ホストを用意し、ルール編集や承認画面をチャット内に表示することも検討する。
 
