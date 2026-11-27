@@ -88,6 +88,13 @@ class Settings(BaseModel, frozen=True):
     )
     """開発 UI (Next.js) からの CORS 許可 origin (§12.2: 家庭内ネットワーク限定)。"""
 
+    api_users_json: str = ""
+    """Phase 1 API の 認証 ユーザー (決定 1.27)。`API_USERS_JSON` =
+    JSON 配列 `[{"id","password_sha256","role"}]` の 生 文字列 の まま 保持 する。
+    未設定・空 list は fail-closed (app は 起動 しない。解釈 は app.api.auth が 担当)。
+    平文 password・API key を Git 管理 しない ため hash の み 環境 変数 で 渡す。
+    """
+
     permission_timeout_seconds: int = Field(
         DEFAULT_PERMISSION_TIMEOUT_SECONDS, ge=10, le=3600
     )
@@ -328,4 +335,5 @@ def load_settings(repo_root: Path | None = None) -> Settings:
         ),
         host=_env("HOST", "127.0.0.1"),
         port=_env_int("PORT", 8000),
+        api_users_json=_env("API_USERS_JSON", ""),
     )

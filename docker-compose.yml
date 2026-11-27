@@ -154,6 +154,9 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       COPILOT_GITHUB_TOKEN: ${COPILOT_GITHUB_TOKEN:-}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-http://127.0.0.1:3000}
+      # Phase 1 API の認証 users (決定 1.27)。ホストの .env から補間するだけで
+      # literal は置かない。未設定だと app は fail-closed で起動しない。
+      API_USERS_JSON: ${API_USERS_JSON:-}
       SESSION_IDLE_TIMEOUT_SECONDS: ${SESSION_IDLE_TIMEOUT_SECONDS:-900}
       AGENT_TURN_TIMEOUT_SECONDS: ${AGENT_TURN_TIMEOUT_SECONDS:-240}
       MONITOR_HEARTBEAT_SECONDS: ${MONITOR_HEARTBEAT_SECONDS:-5}

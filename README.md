@@ -284,6 +284,8 @@ approved_by: user
 食事への影響を優先して考える。
 ```
 
+created_atとupdated_atは秒精度と固定オフセット付きの時刻表記で記録する。オフセットの無い時刻や日付のみの値は受け付けない。
+
 ## 4.3 ルールの属性
 
 | 属性 | 説明 |
@@ -346,7 +348,7 @@ data/rules/parenting/
         v3.md
 ```
 
-最新版への参照を管理する。
+最新版への参照は常に最大のversion（未承認を含む）を指す。versionは複合主鍵の一部とし、revisionごとに作り直さず、番号は使い回さない。
 
 各変更について以下を記録する。
 
@@ -771,6 +773,8 @@ Agent Evaluation
 
 検索結果は関連度順で返す。
 
+検索件数は既定10・上限20とする（上限を超える指定は拒否）。
+
 検索対象は原則としてactiveのルールとする。
 
 pending_approvalのルールは正式な判断根拠として使用しない。
@@ -909,6 +913,8 @@ AIが提案したルールを一覧表示する。
 
 FastAPIで以下のAPIを実装する。
 
+Rule APIとApproval APIの全endpointは12.1のHTTP Basic認証を要求する。
+
 ## 10.1 Chat API
 
 | Method | Endpoint | 説明 |
@@ -951,6 +957,18 @@ data: {"message_id":"msg-001"}
 | POST | /api/rules/{id}/restore | バージョン復元 |
 | GET | /api/rules/search | ルール検索 |
 
+POST /api/rules と PUT /api/rules/{id} のbodyはルールMarkdownそのもの（Content-Type: text/markdown）とする。front matterの属性は4.2に沿うが、id・version・status・created_at・updated_atはサーバーが管理するためbodyのfront matterにidを含めない。idはサーバーが `<category>-<3桁の連番>` で採番する（連番は同一categoryの既存最大値+1）。作成の成功時は201を返し、作成されたpending_approvalのルールを返す。
+
+GET /api/rulesは任意のqueryパラメータ status・category を受け付け、updated_atの降順で返す。
+
+GET /api/rules/{id} の詳細はfront matterの属性と現在versionの本文全文とversion一覧を返す。
+
+POST /api/rules/{id}/restoreはqueryパラメータ version を受け付け、過去のversionの本文から新しいACTIVEのversionを作り直す。復元は人間の操作であり承認を経ない。
+
+GET /api/rules/searchはq（必須）・status（既定active）・category（任意）・limit（既定10・上限20）を受け付け、関連度順で返す。
+
+APIが返す時刻はAsia/Tokyoのオフセット付き（+09:00）で表示する。
+
 ## 10.3 Approval API
 
 | Method | Endpoint | 説明 |
@@ -962,6 +980,12 @@ data: {"message_id":"msg-001"}
 
 承認APIは認証された人間の操作のみ許可する。
 
+承認待ち一覧と承認対象詳細は rules の pending_approval の投影とする。
+
+承認・却下のbodyは任意の審査comment `{"review_comment": "..."}` のみを受け付け、versionやidの指定は受け付けない。`reviewed_by` と `reviewed_at` はサーバーが設定する。
+
+却下されたルールは status が rejected になり、本文は保持される。却下後に有効化する経路はバージョン復元とする。
+
 ## 10.4 History API
 
 | Method | Endpoint | 説明 |
@@ -969,11 +993,27 @@ data: {"message_id":"msg-001"}
 | GET | /api/history | 判断履歴一覧 |
 | GET | /api/history/{id} | 判断履歴詳細 |
 
+## 10.5 エラー表現
+
+Rule APIとApproval APIのエラーはapplication/problem+json（RFC 9457）で返す。codeは `unknown_error.<slug>` または `validation_error.<slug>` の形式とする。Phase 1で発生し得るcodeは `unknown_error.*` のみで、`validation_error.*` は決定済みだがPhase 1では発生しない。
+
+| HTTP status | code | 意味 |
+|---|---|---|
+| 400 | `unknown_error.invalid_request` | Markdownが解釈できない、restoreのversionが不正、front matter不正の全般 |
+| 401 | `unknown_error.unauthenticated` | 認証資格情報の欠落・不一致 |
+| 404 | `unknown_error.rule_not_found` | rule_idが存在しない |
+| 404 | `unknown_error.approval_not_found` | 承認対象が存在しないかpending_approvalではない |
+| 409 | `unknown_error.rule_version_state` | ruleのstatusがその操作を認めない状態 |
+| 409 | `unknown_error.rule_content_conflict` | 更新内容が現在のversionと同一 |
+| 422 | `validation_error.rule_text` | 入力検証を通過したが4.3の本文ルール（4つのH1など）に違反 |
+
 ---
 
 # 11. データベース設計
 
 SQLiteに以下のテーブルを作成する。
+
+時刻列はTEXTにUTCのcanonical形式 `YYYY-MM-DDTHH:MM:SS.ffffff+00:00` （microseconds6桁必須）で保存し、CHECK制約で形式・範囲・暦を検証する。データベースは時計を読まず、呼び出し側が時刻を渡す。表示はAsia/Tokyo（+09:00）のオフセット付きとする。
 
 ## 11.1 conversations
 
@@ -1006,6 +1046,10 @@ SQLiteに以下のテーブルを作成する。
 - file_path
 - created_at
 - updated_at
+- approved_at
+- archived_at
+
+approved_atは承認時刻、archived_atはアーカイブ時刻で、サーバーのみが更新する。current_versionとfile_pathは常に最新のversion（未承認を含む）を指す。未承認の内容は検索結果に現れない。
 
 ## 11.4 rule_versions
 
@@ -1017,6 +1061,8 @@ SQLiteに以下のテーブルを作成する。
 - created_by
 - approved_by
 - created_at
+
+content_hashは4.2の形式でレンダリングしたルールMarkdownのbyte列のSHA-256を小文字16進で表したものとする。更新時に拒否するのはrules.current_versionが指すversionと同一のcontentを持つ場合のみとする。
 
 ## 11.5 approvals
 
@@ -1060,6 +1106,12 @@ SQLiteに以下のテーブルを作成する。
 家庭内ネットワーク限定であっても認証機能を設ける。
 
 初期段階ではシンプルなユーザー認証を実装する。
+
+Phase 1のHTTP APIはHTTP Basic (RFC 7617) を使う。ユーザーは環境変数 `API_USERS_JSON` のJSON配列 `[{"id": "...", "password_sha256": "...", "role": "..."}]` で管理する。`password_sha256` にはパスワードのSHA-256ダイジェストを16進小文字で保持し、平文のパスワードは保持しない。`API_USERS_JSON` が未設定または空配列のとき、APIは起動しない。
+
+承認・登録操作の `created_by` / `reviewed_by` は認証したユーザーの id をサーバーが設定する。
+
+`role` は admin・member を保持できるが、Phase 1では権限の分離に使わない。
 
 ユーザー単位の権限を考慮し、将来的に管理者・一般利用者を分けられる設計にする。
 
@@ -1162,15 +1214,15 @@ tamper case `baked-secret-in-image`)。
 
 Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 の frontend / backend は、
 初期段階では runtime 1 service に集約し (frontend は Phase 3)、検証用 service を profile で分離する。
-`api` / `ui-bridge` は Phase 1 の UI ブリッジ用で profile 分離のため既存 track の挙動は変えない
-(実装は未完了。下記の局限参照)。
+`api` / `ui-bridge` は Phase 1 用で profile 分離のため既存 track の挙動は変えない
+(`api` は Rule / Approval API として実装済み、`ui-bridge` は未完了。下記の局限参照)。
 
 | service | profile | image | 用途 |
 | :--- | :--- | :--- | :--- |
 | `runtime` | 無し (default up) | `household-ai-runtime-test:0.1.0` | API / Agent 実行。`household-data` named volume を `/app/data` へ mount |
 | `gate` | `checks` | 同上 | lint / test / claims 検査。working tree を `:ro` で mount |
 | `proof` | `checks` | 同上 | offline / live の proof 実行。session store と runtime cache は `/tmp` 退避 |
-| `api` | `ui` | 同上 | Phase 1 の HTTP API (`uvicorn app.main:app`)。`127.0.0.1:8000` のみへ publish し `household-data` を mount |
+| `api` | `ui` | 同上 | Phase 1 の HTTP API (`uvicorn app.main:app`)。`API_USERS_JSON` (12.1) が必須。`127.0.0.1:8000` のみへ publish し `household-data` を mount |
 | `ui-bridge` | `checks` | 同上 | Phase 1 の UI ブリッジ live test (`pytest tests/live`)。証跡は `/out` (host の `.local/ui/out`)、状態は `/tmp` 退避。published port 無し |
 
 永続化は named volume `household-data` で行う (13.2 の「ホスト側のディレクトリ」は docker が
@@ -1192,10 +1244,15 @@ Phase 0 で実装した docker-compose.yml の service 構成は以下。13.1 �
 | live proof claims gate 再検証 | `make gate-live-proof-claims` | `live-proof-two-cases.json` + `test_live_proof_summary.py` (29 tests) |
 
 手順と残存局限の詳細は [docs/evidence/offline-runtime-proof-notes.md](./docs/evidence/offline-runtime-proof-notes.md) §6。
-Phase 0 で未 closed の局限: 実 `docker compose up` の起動証跡なし、claims 検査は expand 結果のみを
-対象とする (expand 生成は gate image に docker CLI が無いため host 側)、built-in tool への deny 応答は
-実測未取得 (unit test 検証)。`api` / `ui-bridge` は構成 (profile・mount・port・state 退避) までで、
-`backend/app/main.py` と `tests/live/` が未実装のため起動しない。frontend の UI と contract test
+Phase 0 で未 closed の局限: claims 検査は expand 結果のみを対象とする (expand 生成は gate image に
+docker CLI が無いため host 側)、built-in tool への deny 応答は実測未取得 (unit test 検証)。
+`ui-bridge` は構成 (profile・mount・port・state 退避) までで、`tests/live/` が未実装のため起動しない。
+`backend/app/main.py` は実装済みで、create_app が Phase 1 の Rule / Approval API を組み立てる。
+認証は fail-closed で、`API_USERS_JSON` が無いと起動しないため `api` service への設定が必要。
+`api` は使い捨て credentials を host の `.env` に置いて実 `docker compose up` で healthy 化し、
+Basic 認証付きでルール作成・承認・検索・version 一覧が通ることを確認済み (liveness は
+`GET /api/health` の 200 で判定、検証後の stack・volume・credentials は破棄)。
+frontend の UI と contract test
 (vitest) は未作成 (docs/plan/2026-11-11-phase0-ui-implementation-contract.md §8・§14 が要求)。
 
 ---
@@ -1341,11 +1398,11 @@ Docker環境でチャットとCustom Toolsが動作する。→ 実測で確認�
 6. ルールのバージョン管理
 
 成果物：
-ルール管理API。
+ルール管理API・人間審査API。
 
 完了条件：
-ルールを登録・検索・更新できる。加えて Phase 0 gate (上記 1〜5) と §14.2 に追加した gate 項目
-(chat 応答の完了判定、認証状態の確認) の確認を含む。
+ルールを登録・検索・更新でき、人間が承認・却下・バージョン復元できる。加えて Phase 0 gate (上記 1〜5) と
+§14.2 に追加した gate 項目 (chat 応答の完了判定、認証状態の確認) の確認を含む。
 
 ## Phase 2：AI Agent統合
 
