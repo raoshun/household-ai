@@ -14,7 +14,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ..config import Settings
 from .events import AgentEvent, TurnResult
@@ -22,6 +22,7 @@ from .provider import (
     AgentProvider,
     AgentSessionError,
     AgentSessionHandle,
+    ConnectStatus,
     CopilotAgentProvider,
     ProviderUnavailableError,
     SessionRequest,
@@ -248,6 +249,23 @@ class AgentRuntime:
             sessions=len(self._handles),
             detail=None if self._started else "start() されていません",
         )
+
+    async def connect_status(self) -> ConnectStatus:
+        """ライブの GitHub 凭证接続状態を返す (Issue #4)。
+
+        health_check() と違い SDK へ RPC を投げるので、Connect 機能やコネクタの
+        可否判定という必要なときだけ呼ぶ。provider が未実装でも落ちないよう
+        optional call にする (§7.2 protocol 互換)。
+        """
+        self._require_started()
+        connect_status = getattr(self._provider, "connect_status", None)
+        if connect_status is None:
+            return ConnectStatus(
+                False,
+                False,
+                detail="provider が connect_status 未実装",
+            )
+        return cast("ConnectStatus", await connect_status())
 
     async def list_models(self) -> list[str]:
         """provider が利用できるモデル ID (§4 Phase 0 のモデル指定確認)。"""

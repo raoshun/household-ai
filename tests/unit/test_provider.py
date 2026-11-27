@@ -15,6 +15,7 @@ from typing import Any
 
 from fake import (
     TURN_PENDING,
+    AuthStatus,
     Data,
     FakeClient,
     PermissionRequest,
@@ -150,6 +151,74 @@ async def test_provider_health_and_list_models(tmp_path: Path) -> None:
     health = await provider.health_check()
     assert (health.ready, health.model, health.sessions) == (True, "gemma4:e2b", 0)
     assert await provider.list_models() == ["gemma4:e2b", "qwen3:8b"]
+
+
+# ------------------------------------------------------------------
+# connect_status (Issue #4: GitHub 凭证接続状態)
+# ------------------------------------------------------------------
+async def test_connect_status_は凭证なし起動で_unauthenticated(tmp_path: Path) -> None:
+    # BYOK 無凭证構成 (mode='empty') の回帰: 照会はできるが認証されてない
+    provider, _ = _provider(tmp_path)
+    await provider.start()
+
+    status = await provider.connect_status()
+
+    assert (status.reachable, status.github_authenticated, status.login) == (
+        True,
+        False,
+        None,
+    )
+
+
+async def test_connect_status_は_token接続なら_authenticated(tmp_path: Path) -> None:
+    provider, _ = _provider(
+        tmp_path,
+        auth_status=AuthStatus(
+            isAuthenticated=True, authType="github-token", login="octocat"
+        ),
+    )
+    await provider.start()
+
+    status = await provider.connect_status()
+
+    assert (status.reachable, status.github_authenticated, status.login) == (
+        True,
+        True,
+        "octocat",
+    )
+    assert status.auth_type == "github-token"
+
+
+async def test_connect_status_は照会失敗で_reachable_false(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path, auth_status=RuntimeError("rpc down"))
+    await provider.start()
+
+    status = await provider.connect_status()
+
+    assert status.reachable is False
+    assert status.github_authenticated is False
+    assert status.detail is not None
+    assert "rpc down" in status.detail
+
+
+async def test_connect_status_は旧_sdk_でも例外にしない(tmp_path: Path) -> None:
+    # get_auth_status を持たない SDK に対しては detail を添えて握りつぶす
+    provider, _ = _provider(tmp_path, supports_auth_status=False)
+    await provider.start()
+
+    status = await provider.connect_status()
+
+    assert (status.reachable, status.github_authenticated) == (False, False)
+    assert status.detail is not None and "get_auth_status" in status.detail
+
+
+async def test_connect_status_は未起動で_reachable_false(tmp_path: Path) -> None:
+    provider, _ = _provider(tmp_path)
+
+    status = await provider.connect_status()
+
+    assert (status.reachable, status.github_authenticated) == (False, False)
+    assert status.detail is not None and "start()" in status.detail
 
 
 # ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ __all__ = [
     "AgentProviderError",
     "AgentSessionError",
     "AgentSessionHandle",
+    "ConnectStatus",
     "CopilotAgentProvider",
     "CopilotAgentSession",
     "CustomToolExecutionError",
@@ -170,6 +171,22 @@ class ProviderHealth:
     provider: str
     model: str | None = None
     sessions: int = 0
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectStatus:
+    """SDK runtime の GitHub 凭证接続状態 (Issue #4、`auth.getStatus` RPC の実測)。
+
+    `reachable` が False のときは runtime へ照会できなかった状態 (未起動・
+    旧 SDK・RPC 失敗) なので `github_authenticated` を信用しない。
+    `login` は接続確認の表示用のみで、凭证そのものは決して含まない。
+    """
+
+    reachable: bool
+    github_authenticated: bool
+    login: str | None = None
+    auth_type: str | None = None
     detail: str | None = None
 
 
@@ -585,6 +602,40 @@ class CopilotAgentProvider:
             model=self._settings.model,
             sessions=len(self._sessions),
             detail=None if self._client is not None else "start() されていません",
+        )
+
+    async def connect_status(self) -> ConnectStatus:
+        """SDK runtime 現在の GitHub 凭证接続状態を照会する (Issue #4)。
+
+        GitHub コネクタ / Connect 機能の利用可否判定に使う。health check から
+        呼べるよう例外は返さず、照会失敗は `reachable=False` の detail に載せる。
+        SDK が `COPILOT_GITHUB_TOKEN` (または GH_TOKEN / GITHUB_TOKEN) を
+        読んだ結果をそのまま反映するため、凭证なし起動では unauthenticated になる
+        (2026-11-10 実測の BYOK 無凭证動作の回帰もここで行う)。
+        """
+        client = self._client
+        if client is None:
+            return ConnectStatus(False, False, detail="start() されていません")
+        get_auth_status = getattr(client, "get_auth_status", None)
+        if get_auth_status is None:
+            return ConnectStatus(False, False, detail="SDK に get_auth_status が無い")
+        try:
+            status = await get_auth_status()
+        except Exception as exc:
+            return ConnectStatus(False, False, detail=f"auth.getStatus 失敗: {exc}")
+        if isinstance(status, Mapping):
+            authenticated = bool(status.get("isAuthenticated", False))
+            login = status.get("login")
+            auth_type = status.get("authType")
+        else:
+            authenticated = bool(getattr(status, "isAuthenticated", False))
+            login = getattr(status, "login", None)
+            auth_type = getattr(status, "authType", None)
+        return ConnectStatus(
+            True,
+            authenticated,
+            login=str(login) if login else None,
+            auth_type=str(auth_type) if auth_type else None,
         )
 
 

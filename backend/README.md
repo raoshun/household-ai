@@ -55,7 +55,11 @@ driver は tag 引数（`sys.argv[1]`）のみ。tool 方針は `HOUSEHOLD_TOOL_
 
 - BYOK Chat と Custom Tool 実行に GitHub 凭证は**不要**（token 無しで host/Docker とも green。
   `list_models` だけで "Not authenticated" が出、BYOK では BYOK models を返す）。実測は `docs/evidence/offline-runtime-proof-notes.md`。
-- 凭证が要る GitHub connector / Connect 系は Phase 2（Issue #4）で扱う。
+- GitHub 認証状態（`auth.getStatus`）の実測手順（Issue #4）: host env の `COPILOT_GITHUB_TOKEN` を
+  container へ透過するだけでは `isAuthenticated` は true にならない（2026-11-22 実測。`auth.getStatus` は
+  client の Copilot 署名状態を返すため）。確立手順は token を env に置いたうえで `gh auth login --use-env`
+  を実行すること。確認は `make gate-auth-connect`（凭证不要で green。token 有無と Connect reachable を
+  JSON で出す。detail は `tests/proofs/phase1_auth_connect_probe.py`）。
 - 1.0.29 が読む env 名は `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`（client の `github_token` 引数でも可）。
   **`COPILOT_GITHUB_TOKEN_FILE` は存在しない**。token を渡すなら host env か project dir の `.env`（compose が読む）で注入する。
 - base_directory（`COPILOT_RUNTIME_DIR`）に CLI の auth state は保存されない（token 無しで gate green。session resume は session id での resume）。
@@ -96,6 +100,7 @@ Named volume `household-data` は `/app/data`（image 内 paths）に mount す�
 | `make lint` / `make test` / `make fmt` | gate の各工程を単独実行 |
 | `make probe` | pinned image 内で `tests/proofs/sdk_api_probe.py` を実行 |
 | `make proof` | live proof。host env の `AI_api_key` 等を container へ渡す |
+| `make gate-auth-connect` | 認証状態 / Connect gate probe（凭证不要。`COPILOT_GITHUB_TOKEN` を透過可） |
 | `make up` / `logs` / `down` | runtime 起動・確認・停止 |
 | `make verify-pinned` | manifest と install 済み SDK / CLI version、release asset digest の整合を確認 |
 | `make runtime-mirror` / `make runtime-serve` | pin 済み runtime asset を mirror へ staging し HTTP serve |

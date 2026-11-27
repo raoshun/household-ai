@@ -11,7 +11,7 @@ EVIDENCE ?= docs/evidence
 # `make proof PROOF_TOOLS=none` で内蔵 tool-only の case を計測する。
 PROOF_TOOLS ?= custom
 
-.PHONY: help build build-offline up down logs gate proof probe lint test fmt runtime-mirror
+.PHONY: help build build-offline up down logs gate proof gate-auth-connect probe lint test fmt runtime-mirror
 .PHONY: runtime-serve verify-pinned prove-offline prove-offline-negative prove-offline-runtime
 .PHONY: prove-manifest-version-tamper prove-manifest-digest-tamper
 .PHONY: compose-claims-stage prove-compose-claims prove-compose-claims-tamper gate-compose-claims
@@ -54,6 +54,9 @@ gate: ## import 確認 + ruff + unit test を Docker で実行 (既定の検証)
 
 proof: ## Custom Tool / permission の live proof を Docker で実行
 	$(COMPOSE) --profile checks run --rm -e HOUSEHOLD_PROOF_TOOLS=$(PROOF_TOOLS) proof
+
+gate-auth-connect: ## 認証状態 / Connect gate probe を Docker で実行 (Issue #4、凭证不要)
+	$(COMPOSE) --profile checks run --rm auth-gate
 
 probe: ## pinned SDK の API 面を実測 (pinned image 内で実行)
 	@docker run --rm $(IMAGE) python /app/tests/proofs/sdk_api_probe.py
