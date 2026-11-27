@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Phase 0 実測結果: BYOK プロバイダー指定時は GitHub 認証が不要。
 # したがって github_token は none に初期化し、明示設定時のみ使う。
@@ -132,6 +132,25 @@ class Settings(BaseModel, frozen=True):
     def _valid_turn_timeout(cls, value: int) -> int:
         """1.0.29 で実際にターン完了まで待ち受ける秒数のため下限を設ける。"""
         return cls._valid_timeout(value)
+
+    @model_validator(mode="after")
+    def _turn_within_idle_window(self) -> Settings:
+        """ターン上限は会話 idle timeout 以内でなければならない (§4 / §7.2)。
+
+        `session_idle_timeout_seconds` は client が無稼働のセッションを保持する上限
+        (超過で reaper が閉じる)。ターンの完了待ちがこれを上回ると、ターン確定前に
+        セッションが切断され得るため
+        `turn_timeout_seconds <= session_idle_timeout_seconds` を要求する。
+        idle を 0 (reaper 無効) にした場合は制約しない。
+        """
+        idle = self.session_idle_timeout_seconds
+        if idle and self.turn_timeout_seconds > idle:
+            raise ValueError(
+                "turn timeout は SESSION_IDLE_TIMEOUT_SECONDS 以下で設定する "
+                f"(turn={self.turn_timeout_seconds} > idle={idle})。"
+                "idle 無効なら SESSION_IDLE_TIMEOUT_SECONDS=0 とする"
+            )
+        return self
 
     @staticmethod
     def _valid_timeout(value: int) -> int:
