@@ -138,12 +138,12 @@ def _require_grant(
         action="grant_consumed",
         actor="family",
         detail={
-            "approval_id": grant.approval_id,
+            "approval_id": grant.prompt.prompt_id,
             "grant_sequence": grant.sequence,
             "tool_name": tool_name,
         },
         kind="approval",
-        target=grant.approval_id,
+        target=grant.prompt.prompt_id,
     )
     return True
 
@@ -230,9 +230,9 @@ def _tool_propose_rule(
     conflicts = ctx.store.detect_conflicts(rule)
     judgment = ctx.judgments.record(
         approval_refs=[
-            record.approval_id
+            record.prompt.prompt_id
             for record in ctx.broker.consumed_grants()
-            if record.tool_name == "propose_rule"
+            if record.prompt.tool_name == "propose_rule"
         ],
         audit_refs=[entry.entry_id for entry in ctx.audit.entries("rule_mutation")],
         basis=[{"rule_id": None, "text": "agent proposal from conversation"}],
