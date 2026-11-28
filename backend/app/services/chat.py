@@ -24,6 +24,7 @@ from app.agent.events import AgentEventType
 from app.agent.permissions import PermissionBroker
 from app.clock import tokyo_iso
 from app.config import Settings, load_settings
+from app.services.agent_tools import AgentRuleContext, build_agent_rule_tools
 from app.services.audit import AuditTrail, ConversationLog, JudgmentStore
 from app.services.exceptions import (
     ChatServiceError,
@@ -225,7 +226,7 @@ class ChatService:
         self._queued: dict[str, asyncio.Queue[str]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._turn_seq: dict[str, int] = {}
-        self._tool_ctx: dict[str, RuleToolContext] = {}
+        self._tool_ctx: dict[str, RuleToolContext | AgentRuleContext] = {}
         self._last_usage: dict[str, dict[str, Any]] = {}
         self._monitor_heartbeat = (
             self._settings.monitor_heartbeat_seconds
@@ -523,16 +524,27 @@ class ChatService:
         if self._owns_runtime and not self._runtime.started:
             # start() を呼んでいなくても thread を作れる (HTTP 層 start 前でも動く).
             await self._runtime.start()
-        tool_ctx = RuleToolContext(
-            audit=self._audit,
-            broker=self._broker,
-            conversation_id=conversation_id,
-            judgments=self._judgments,
-            store=self._rules,
-        )
+        if self._settings.agent_rule_tools and not self._settings.demo_rule_tools:
+            tool_ctx: RuleToolContext | AgentRuleContext = AgentRuleContext(
+                audit=self._audit,
+                broker=self._broker,
+                conversation_id=conversation_id,
+                db_path=self._settings.database_path,
+                rules_root=self._settings.rules_dir,
+            )
+            tools = build_agent_rule_tools(tool_ctx)
+        else:
+            tool_ctx = RuleToolContext(
+                audit=self._audit,
+                broker=self._broker,
+                conversation_id=conversation_id,
+                judgments=self._judgments,
+                store=self._rules,
+            )
+            tools = build_rule_tools(tool_ctx, only=self._rule_tool_names())
         handle = await self._runtime.create_session(
             model=model or self._settings.model,
-            tools=build_rule_tools(tool_ctx, only=self._rule_tool_names()),
+            tools=tools,
         )
         self._sessions[handle.session_id] = conversation_id
         self._hub.bind_session(

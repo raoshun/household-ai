@@ -227,7 +227,8 @@ async def test_open_session_starts_runtime_and_binds_hub_and_tool_context() -> N
 
     assert provider.start_calls == 1
     assert provider.requests[0].model == "qwen3:8b"
-    assert provider.requests[0].tools == []
+    names = {declaration.name for declaration in provider.requests[0].tools}
+    assert {"search_rules", "get_rule", "propose_rule", "evaluate_rule"} == names
     assert thread.session_id in provider.sessions
     assert service._sessions[thread.session_id] == thread.thread_id
     assert service._hub.conversation_for_session(thread.session_id) == thread.thread_id

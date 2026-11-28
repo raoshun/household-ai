@@ -102,6 +102,8 @@ class Settings(BaseModel, frozen=True):
 
     demo_rule_tools: bool = True
     """Phase 0 検証用の in-memory 規則 tool を登録するか (Phase 1 で差し替え)。"""
+    agent_rule_tools: bool = True
+    """Phase 2 の永続 rule store Custom Tools を登録するか。"""
 
     agui_emit_reasoning: bool = True
     """AG-UI bridge が REASONING_* event を出すか (§2.1 トレース表示)。"""
@@ -314,6 +316,7 @@ def load_settings(repo_root: Path | None = None) -> Settings:
             "PERMISSION_TIMEOUT_SECONDS", DEFAULT_PERMISSION_TIMEOUT_SECONDS
         ),
         demo_rule_tools=_env("DEMO_RULE_TOOLS", "on").lower() in truthy,
+        agent_rule_tools=_env("AGENT_RULE_TOOLS", "on").lower() in truthy,
         agui_emit_reasoning=_env("AGUI_EMIT_REASONING", "on").lower() in truthy,
         max_frames_per_thread=_env_int(
             "MAX_FRAMES_PER_THREAD", DEFAULT_MAX_FRAMES_PER_THREAD
